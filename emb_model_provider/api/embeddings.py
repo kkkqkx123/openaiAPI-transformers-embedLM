@@ -1,6 +1,7 @@
 from typing import List, Union, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter
+from emb_model_provider.core.performance_monitor import performance_monitor
 
 
 # 创建API路由器
@@ -56,3 +57,20 @@ async def create_embeddings(request: EmbeddingRequest):
     # 处理嵌入请求
     response = embedding_service.process_embedding_request(request)
     return response
+
+
+@router.get("/v1/performance")
+async def get_performance_metrics():
+    """
+    获取性能监控指标
+    """
+    return performance_monitor.get_performance_report()
+
+
+@router.post("/v1/performance/reset")
+async def reset_performance_metrics():
+    """
+    重置性能监控指标
+    """
+    performance_monitor.reset_metrics()
+    return {"message": "Performance metrics reset successfully"}

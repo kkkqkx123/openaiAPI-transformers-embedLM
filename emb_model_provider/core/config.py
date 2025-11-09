@@ -12,6 +12,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+import torch
+
 
 class Config(BaseSettings):
     """
@@ -43,8 +45,41 @@ class Config(BaseSettings):
     max_batch_size: int = Field(
         default=32,
         ge=1,
-        le=128,
+        le=512,  # 提高最大限制以支持高端GPU
         description="Maximum batch size for processing"
+    )
+    
+    # Dynamic batch processing configuration
+    enable_dynamic_batching: bool = Field(
+        default=True,
+        description="Enable dynamic batch processing for better throughput"
+    )
+    
+    max_wait_time_ms: int = Field(
+        default=100,
+        ge=10,
+        le=1000,
+        description="Maximum wait time in milliseconds for dynamic batching"
+    )
+    
+    min_batch_size: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+        description="Minimum batch size for dynamic batching"
+    )
+    
+    # Memory optimization configuration
+    enable_length_grouping: bool = Field(
+        default=True,
+        description="Enable length-based grouping to reduce padding overhead"
+    )
+    
+    length_group_tolerance: float = Field(
+        default=0.2,
+        ge=0.1,
+        le=0.5,
+        description="Tolerance for length grouping (20% means groups can have 20% length difference)"
     )
     max_context_length: int = Field(
         default=512,
@@ -171,5 +206,61 @@ class Config(BaseSettings):
         }
 
 
+    def get_optimal_batch_size(self) -> int:
+        """
+        根据GPU内存自动计算最优批处理大小
+        
+        Returns:
+            int: 最优批处理大小
+        """
+        if torch.cuda.is_available():
+            gpu_props = torch.cuda.get_device_properties(0)
+            gpu_memory_gb = gpu_props.total_memory / (1024**3)
+            
+            # 根据GPU内存大小估算最优批处理大小
+            # 基础估算：每个样本大约需要 100-200MB 显存（包括模型和中间结果）
+            if gpu_memory_gb >= 24:  # RTX 4090, A100
+                optimal_size = 256
+            elif gpu_memory_gb >= 16:  # RTX 3090, V100
+                optimal_size = 128
+            elif gpu_memory_gb >= 12:  # RTX 3060, 3080
+                optimal_size = 64
+            elif gpu_memory_gb >= 8:   # RTX 2070, 2080
+                optimal_size = 32
+            else:  # 低端GPU或集成GPU
+                optimal_size = 16
+            
+            # 确保不超过配置的最大值
+            return min(optimal_size, self.max_batch_size)
+        else:
+            # CPU模式下使用较小的批处理大小
+            return min(16, self.max_batch_size)
+    
+    def optimize_for_hardware(self) -> None:
+        """
+        根据硬件特性优化配置
+        """
+        if torch.cuda.is_available():
+            gpu_props = torch.cuda.get_device_properties(0)
+            
+            # 根据GPU架构调整配置
+            if gpu_props.major >= 8:  # Ampere架构及以上
+                # 启用更激进的批处理设置
+                if self.max_batch_size < 64:
+                    self.max_batch_size = 64
+            
+            # 根据显存大小调整动态批处理参数
+            gpu_memory_gb = gpu_props.total_memory / (1024**3)
+            if gpu_memory_gb >= 16:
+                self.max_wait_time_ms = 150  # 高端GPU可以等待更长时间以获得更大批次
+                self.min_batch_size = 4
+            else:
+                self.max_wait_time_ms = 50   # 低端GPU快速处理小批次
+                self.min_batch_size = 1
+
+
 # Global configuration instance
 config = Config.from_env()
+
+# 自动优化配置
+config.optimize_for_hardware()
