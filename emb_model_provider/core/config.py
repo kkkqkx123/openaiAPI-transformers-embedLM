@@ -9,8 +9,8 @@ import os
 from typing import Optional
 from pathlib import Path
 
-from pydantic import Field, SettingsConfigDict
-from pydantic_settings import BaseSettings
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Config(BaseSettings):

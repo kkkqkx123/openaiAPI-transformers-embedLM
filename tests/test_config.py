@@ -192,18 +192,26 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
     def test_valid_values(self):
         """Test that valid values are accepted."""
         # These should not raise any exceptions
+        # Test individual valid values
+        Config(max_batch_size=1)
+        Config(max_batch_size=128)
+        Config(max_context_length=1)
+        Config(max_context_length=2048)
+        Config(embedding_dimension=1)
+        Config(port=1)
+        Config(port=65535)
+        Config(log_level="DEBUG")
+        Config(log_level="INFO")
+        Config(log_level="WARNING")
+        Config(log_level="ERROR")
+        
+        # Test combination of valid values
         config = Config(
-            max_batch_size=1,
-            max_batch_size=128,
-            max_context_length=1,
-            max_context_length=2048,
-            embedding_dimension=1,
-            port=1,
-            port=65535,
+            max_batch_size=64,
+            max_context_length=1024,
+            embedding_dimension=512,
+            port=8080,
             log_level="DEBUG",
-            log_level="INFO",
-            log_level="WARNING",
-            log_level="ERROR",
         )
         
         assert config is not None
