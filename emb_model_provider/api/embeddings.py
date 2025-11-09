@@ -32,11 +32,17 @@ class EmbeddingResponse(BaseModel):
     usage: Usage
 
 
+# 全局变量，用于存储 EmbeddingService 实例
+_embedding_service_instance = None
+
 # 延迟导入服务，避免循环导入
 def get_embedding_service():
-    from emb_model_provider.services.embedding_service import EmbeddingService
-    from emb_model_provider.core.config import config
-    return EmbeddingService(config)
+    global _embedding_service_instance
+    if _embedding_service_instance is None:
+        from emb_model_provider.services.embedding_service import EmbeddingService
+        from emb_model_provider.core.config import config
+        _embedding_service_instance = EmbeddingService(config)
+    return _embedding_service_instance
 
 
 @router.post("/v1/embeddings", response_model=EmbeddingResponse)

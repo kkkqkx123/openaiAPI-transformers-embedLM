@@ -3,10 +3,11 @@ from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
 from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingResponse, EmbeddingData, Usage
-from emb_model_provider.api.exceptions import EmbeddingAPIError, BatchSizeExceededError, ContextLengthExceededError
+from emb_model_provider.api.exceptions import EmbeddingAPIError, BatchSizeExceededError, ContextLengthExceededError, ModelNotFoundError
 from emb_model_provider.core.config import Config
 import os
 import time
+import threading
 from emb_model_provider.core.model_manager import ModelManager
 
 
@@ -21,11 +22,19 @@ class EmbeddingService:
         self.model_manager.load_model()  # 显式加载模型
         self.tokenizer = self.model_manager.tokenizer
         self.model = self.model_manager.model
+        # 确保模型在正确的设备上
+        self.device = self.model_manager.device
+        # 添加线程锁以保护 tokenizer 的并发使用
+        self._tokenizer_lock = threading.Lock()
         
     def validate_request(self, request: EmbeddingRequest) -> None:
         """
         验证请求参数
         """
+        # 检查模型名称是否匹配
+        if request.model != self.config.model_name:
+            raise ModelNotFoundError(model_name=request.model)
+        
         # 检查输入是否为空
         if not request.input:
             raise EmbeddingAPIError(
@@ -45,26 +54,32 @@ class EmbeddingService:
             )
         
         # 检查每个输入的上下文长度
-        for input_text in inputs:
-            tokens = self.tokenizer.encode(input_text, add_special_tokens=True)
-            if len(tokens) > self.config.max_context_length:
-                raise ContextLengthExceededError(
-                    max_length=self.config.max_context_length,
-                    actual_length=len(tokens)
-                )
+        with self._tokenizer_lock:
+            for input_text in inputs:
+                tokens = self.tokenizer.encode(input_text, add_special_tokens=True)
+                if len(tokens) > self.config.max_context_length:
+                    raise ContextLengthExceededError(
+                        max_length=self.config.max_context_length,
+                        actual_length=len(tokens)
+                    )
     
     def generate_embeddings(self, inputs: List[str]) -> List[EmbeddingData]:
         """
         生成嵌入向量
         """
-        # 对输入进行编码
-        encoded_inputs = self.tokenizer(
-            inputs,
-            padding=True,
-            truncation=True,
-            return_tensors='pt',
-            max_length=self.config.max_context_length
-        )
+        # 使用线程锁保护 tokenizer 的并发使用
+        with self._tokenizer_lock:
+            # 对输入进行编码
+            encoded_inputs = self.tokenizer(
+                inputs,
+                padding=True,
+                truncation=True,
+                return_tensors='pt',
+                max_length=self.config.max_context_length
+            )
+        
+        # 确保输入张量在正确的设备上
+        encoded_inputs = {k: v.to(self.device) for k, v in encoded_inputs.items()}
         
         # 生成嵌入
         with torch.no_grad():
@@ -104,9 +119,10 @@ class EmbeddingService:
             inputs = [inputs]
         
         total_tokens = 0
-        for input_text in inputs:
-            tokens = self.tokenizer.encode(input_text, add_special_tokens=True)
-            total_tokens += len(tokens)
+        with self._tokenizer_lock:
+            for input_text in inputs:
+                tokens = self.tokenizer.encode(input_text, add_special_tokens=True)
+                total_tokens += len(tokens)
         
         return total_tokens
     

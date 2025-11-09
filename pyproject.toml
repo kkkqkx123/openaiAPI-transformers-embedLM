@@ -35,9 +35,9 @@ dependencies = [
     "isort",
     "flake8",
     "mypy",
-
+    "psutil",
+    "accelerate",
 ]
-
 [project.optional-dependencies]
 dev = []
 

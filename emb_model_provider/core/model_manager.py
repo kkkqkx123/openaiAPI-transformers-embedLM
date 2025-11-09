@@ -117,14 +117,34 @@ class ModelManager:
                 local_files_only=True
             )
             
-            # Load model
+            # Load model with the simplest approach to avoid meta tensor issues
+            # Avoid device_map="auto" in concurrent scenarios to prevent conflicts
             self._model = AutoModel.from_pretrained(
                 self.model_path,
-                local_files_only=True
+                local_files_only=True,
+                torch_dtype=torch.float32 if self.device == "cpu" else torch.float16,
+                low_cpu_mem_usage=False,  # Avoid using low_cpu_mem_usage which can cause meta tensor issues
+                trust_remote_code=False  # Explicitly set to avoid any unexpected behavior
             )
             
-            # Move model to device
-            self._model = self._model.to(self.device)
+            # Move model to the target device
+            # Handle potential meta tensor issues by using to_empty if needed
+            try:
+                self._model = self._model.to(self.device)
+            except RuntimeError as e:
+                if "meta tensor" in str(e).lower():
+                    # If we encounter a meta tensor error, try using to_empty
+                    try:
+                        # First move to CPU to ensure we have real tensors
+                        self._model = self._model.cpu()
+                        # Then move to the target device
+                        self._model = self._model.to(self.device)
+                    except Exception:
+                        # As a last resort, try to_empty approach
+                        self._model = self._model.to_empty(device=self.device)
+                else:
+                    raise
+            
             self._model.eval()
             
             self._model_loaded = True

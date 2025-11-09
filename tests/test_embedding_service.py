@@ -100,8 +100,8 @@ class TestEmbeddingService:
         model_output = Mock()
         model_output.last_hidden_state = torch.randn(2, 5, 10)  # 2个序列，每个5个token，每个token 10维
         attention_mask = torch.tensor([
-            [1, 1, 0, 0],  # 第一个序列前3个token有效
-            [1, 1, 1, 1, 1]   # 第二个序列所有token有效
+            [1, 1, 1, 0, 0],  # 第一个序列前3个token有效，总共5个token
+            [1, 1, 1, 1, 1]   # 第二个序列所有token有效，总共5个token
         ])
         
         result = self.service._mean_pooling(model_output, attention_mask)
