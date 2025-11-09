@@ -41,6 +41,24 @@ class Config(BaseSettings):
         description="Name of the model"
     )
     
+    # Transformers model loading configuration
+    load_from_transformers: bool = Field(
+        default=False,
+        description="Whether to load model directly from transformers without local caching"
+    )
+    transformers_model_name: str = Field(
+        default="sentence-transformers/all-MiniLM-L12-v2",
+        description="Model name to load directly from transformers (used when load_from_transformers=True)"
+    )
+    transformers_cache_dir: Optional[str] = Field(
+        default=None,
+        description="Custom cache directory for transformers models (None uses default cache)"
+    )
+    transformers_trust_remote_code: bool = Field(
+        default=False,
+        description="Whether to trust remote code when loading from transformers"
+    )
+    
     # Processing configuration
     max_batch_size: int = Field(
         default=32,
@@ -223,6 +241,10 @@ class Config(BaseSettings):
             "max_context_length": self.max_context_length,
             "embedding_dimension": self.embedding_dimension,
             "device": self.device,
+            "load_from_transformers": self.load_from_transformers,
+            "transformers_model_name": self.transformers_model_name,
+            "transformers_cache_dir": self.transformers_cache_dir,
+            "transformers_trust_remote_code": self.transformers_trust_remote_code,
         }
     
     def get_api_config(self) -> dict:

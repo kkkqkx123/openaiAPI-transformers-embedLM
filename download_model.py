@@ -7,8 +7,10 @@ from transformers import AutoTokenizer, AutoModel
 import os
 
 def download_model():
-    model_name = "sentence-transformers/all-MiniLM-L12-v2"
-    model_path = "D:\\models\\all-MiniLM-L12-v2"
+    # model_name = "sentence-transformers/all-MiniLM-L12-v2"
+    # model_path = "D:\\models\\all-MiniLM-L12-v2"
+    model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    model_path = "D:\\models\\multilingual-MiniLM-L12-v2"
     
     print(f"正在下载模型 {model_name} 到 {model_path}")
     

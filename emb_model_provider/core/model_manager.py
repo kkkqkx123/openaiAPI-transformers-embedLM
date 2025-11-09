@@ -41,11 +41,20 @@ class ModelManager:
         self.model_name = model_name or config.model_name
         self.device = self._get_device()
         
+        # Transformers configuration
+        self.load_from_transformers = config.load_from_transformers
+        self.transformers_model_name = config.transformers_model_name
+        self.transformers_cache_dir = config.transformers_cache_dir
+        self.transformers_trust_remote_code = config.transformers_trust_remote_code
+        
         self._model = None
         self._tokenizer = None
         self._model_loaded = False
         
-        logger.info(f"Initializing ModelManager for {self.model_name}")
+        if self.load_from_transformers:
+            logger.info(f"Initializing ModelManager for {self.transformers_model_name} (from transformers)")
+        else:
+            logger.info(f"Initializing ModelManager for {self.model_name}")
     
     def _get_device(self) -> str:
         """
@@ -187,25 +196,99 @@ class ModelManager:
             log_model_event("download_error", self.model_name, {"source": "huggingface_hub", "error": str(e)})
             raise RuntimeError(f"Failed to download model: {e}")
     
+    def _load_transformers_model(self) -> None:
+        """
+        Load model and tokenizer directly from transformers.
+        
+        Raises:
+            RuntimeError: If model loading fails
+        """
+        try:
+            logger.info(f"Loading model {self.transformers_model_name} directly from transformers")
+            log_model_event("load_start", self.transformers_model_name, {"source": "transformers"})
+            
+            # Prepare kwargs for model loading
+            model_kwargs = {
+                "torch_dtype": torch.float32 if self.device == "cpu" else torch.float16,
+                "low_cpu_mem_usage": False,
+                "trust_remote_code": self.transformers_trust_remote_code
+            }
+            
+            # Add cache directory if specified
+            if self.transformers_cache_dir:
+                model_kwargs["cache_dir"] = self.transformers_cache_dir
+            
+            # Load tokenizer
+            tokenizer_kwargs = {"trust_remote_code": self.transformers_trust_remote_code}
+            if self.transformers_cache_dir:
+                tokenizer_kwargs["cache_dir"] = self.transformers_cache_dir
+                
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.transformers_model_name,
+                **tokenizer_kwargs
+            )
+            
+            # Load model
+            self._model = AutoModel.from_pretrained(
+                self.transformers_model_name,
+                **model_kwargs
+            )
+            
+            # Move model to the target device
+            try:
+                self._model = self._model.to(self.device)
+            except RuntimeError as e:
+                if "meta tensor" in str(e).lower():
+                    # If we encounter a meta tensor error, try using to_empty
+                    try:
+                        # First move to CPU to ensure we have real tensors
+                        self._model = self._model.cpu()
+                        # Then move to the target device
+                        self._model = self._model.to(self.device)
+                    except Exception:
+                        # As a last resort, try to_empty approach
+                        self._model = self._model.to_empty(device=self.device)
+                else:
+                    raise
+            
+            self._model.eval()
+            
+            self._model_loaded = True
+            
+            logger.info(f"Model loaded successfully from transformers: {self.transformers_model_name}")
+            log_model_event("load_complete", self.transformers_model_name, {"source": "transformers", "device": self.device})
+            
+        except Exception as e:
+            logger.error(f"Failed to load model from transformers: {e}")
+            log_model_event("load_error", self.transformers_model_name, {"source": "transformers", "error": str(e)})
+            raise RuntimeError(f"Failed to load model from transformers: {e}")
+    
     def load_model(self) -> None:
         """
-        Load the model, either from local path or by downloading from Hugging Face Hub.
+        Load the model, either from local path, by downloading from Hugging Face Hub,
+        or directly from transformers based on configuration.
         
-        This method will first try to load the model from the local path.
-        If the model is not available locally, it will download it from Hugging Face Hub.
+        This method will:
+        1. If load_from_transformers is True, load directly from transformers
+        2. Otherwise, try to load from local path first
+        3. If not available locally, download from Hugging Face Hub and load
         """
         if self._model_loaded:
             logger.debug("Model already loaded")
             return
         
-        # Try to load from local path first
-        if self._is_model_available_locally():
-            self._load_local_model()
+        # Check if we should load directly from transformers
+        if self.load_from_transformers:
+            self._load_transformers_model()
         else:
-            # Download model from Hugging Face Hub
-            self._download_model()
-            # Load the downloaded model
-            self._load_local_model()
+            # Try to load from local path first
+            if self._is_model_available_locally():
+                self._load_local_model()
+            else:
+                # Download model from Hugging Face Hub
+                self._download_model()
+                # Load the downloaded model
+                self._load_local_model()
     
     def _tokenize_inputs(self, inputs: List[str]) -> dict:
         """
@@ -365,23 +448,48 @@ class ModelManager:
             dict: Model information
         """
         if not self._model_loaded:
+            if self.load_from_transformers:
+                return {
+                    "model_name": self.transformers_model_name,
+                    "model_path": None,
+                    "device": self.device,
+                    "loaded": False,
+                    "load_from_transformers": True,
+                }
+            else:
+                return {
+                    "model_name": self.model_name,
+                    "model_path": self.model_path,
+                    "device": self.device,
+                    "loaded": False,
+                    "load_from_transformers": False,
+                }
+        
+        if self.load_from_transformers:
+            return {
+                "model_name": self.transformers_model_name,
+                "model_path": None,
+                "device": self.device,
+                "loaded": True,
+                "load_from_transformers": True,
+                "max_context_length": config.max_context_length,
+                "embedding_dimension": config.embedding_dimension,
+                "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
+                "model_type": self._model.config.model_type if self._model else "",
+                "cache_dir": self.transformers_cache_dir,
+            }
+        else:
             return {
                 "model_name": self.model_name,
                 "model_path": self.model_path,
                 "device": self.device,
-                "loaded": False
+                "loaded": True,
+                "load_from_transformers": False,
+                "max_context_length": config.max_context_length,
+                "embedding_dimension": config.embedding_dimension,
+                "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
+                "model_type": self._model.config.model_type if self._model else "",
             }
-        
-        return {
-            "model_name": self.model_name,
-            "model_path": self.model_path,
-            "device": self.device,
-            "loaded": True,
-            "max_context_length": config.max_context_length,
-            "embedding_dimension": config.embedding_dimension,
-            "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
-            "model_type": self._model.config.model_type if self._model else "",
-        }
     
     def save_embeddings_cache(self, embeddings: List[List[float]], inputs: List[str], cache_path: str) -> None:
         """
