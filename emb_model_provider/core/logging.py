@@ -16,6 +16,7 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import config
+from .log_manager import log_manager
 
 
 class JSONFormatter(logging.Formatter):
@@ -124,6 +125,7 @@ def setup_logging() -> None:
     Set up structured JSON logging for the application.
     
     Configures the root logger with JSON formatter and appropriate handlers.
+    Includes both console and file output if configured.
     """
     # Get log level from config
     log_level = getattr(logging, config.log_level.upper(), logging.INFO)
@@ -136,16 +138,24 @@ def setup_logging() -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
     
+    # Create and set JSON formatter
+    formatter = JSONFormatter()
+    
     # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
-    
-    # Create and set JSON formatter
-    formatter = JSONFormatter()
     console_handler.setFormatter(formatter)
-    
-    # Add handler to root logger
     root_logger.addHandler(console_handler)
+    
+    # Initialize log manager and add file handlers if enabled
+    if config.log_to_file:
+        log_manager.initialize()
+        
+        # Add file handlers to root logger for each level
+        for level_name in ['DEBUG', 'INFO', 'WARNING', 'ERROR']:
+            handler = log_manager.get_handler(level_name)
+            if handler:
+                root_logger.addHandler(handler)
     
     # Configure specific loggers
     logging.getLogger("emb_model_provider").setLevel(log_level)
@@ -258,6 +268,16 @@ def log_api_error(
             pass
     
     log_with_request_id(logger, logging.ERROR, message, request_id, exc_info=True)
+
+
+def shutdown_logging() -> None:
+    """
+    Shutdown the logging system.
+    
+    Properly closes file handlers and stops the cleanup scheduler.
+    """
+    if config.log_to_file:
+        log_manager.shutdown()
 
 
 # Initialize logging when module is imported

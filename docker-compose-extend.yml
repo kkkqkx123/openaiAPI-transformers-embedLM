@@ -47,6 +47,58 @@ services:
       retries: 3
       start_period: 40s
 
+  # 可选：添加 Nginx 作为反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: emb-model-provider-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # SSL 证书（可选）
+    depends_on:
+      - emb-model-provider
+    restart: unless-stopped
+    profiles:
+      - with-nginx
+
+  # 可选：添加 Prometheus 进行监控
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: emb-model-provider-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    profiles:
+      - with-monitoring
+
+  # 可选：添加 Grafana 进行可视化
+  grafana:
+    image: grafana/grafana:latest
+    container_name: emb-model-provider-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    profiles:
+      - with-monitoring
+
 volumes:
   prometheus_data:
   grafana_data:

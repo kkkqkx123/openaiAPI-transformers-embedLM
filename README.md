@@ -305,6 +305,7 @@ response = requests.post("/v1/embeddings", json={"input": texts, "model": "all-M
 - **CPU 环境**: 设置 `EMB_PROVIDER_DEVICE=cpu`，减小 `EMB_PROVIDER_MAX_BATCH_SIZE`
 - **GPU 环境**: 设置 `EMB_PROVIDER_DEVICE=cuda`，增大 `EMB_PROVIDER_MAX_BATCH_SIZE`
 - **内存受限**: 减小 `EMB_PROVIDER_MAX_BATCH_SIZE` 和 `EMB_PROVIDER_MEMORY_LIMIT`
+直接使用auto也可以
 
 ## 开发
 

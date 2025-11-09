@@ -5,7 +5,10 @@ Unit tests for the logging module.
 import json
 import logging
 import sys
+import tempfile
+import shutil
 from io import StringIO
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,6 +22,7 @@ from emb_model_provider.core.logging import (
     log_model_event,
     log_with_request_id,
     setup_logging,
+    shutdown_logging,
 )
 
 
@@ -337,6 +341,7 @@ class TestSetupLogging:
     def test_setup_logging_uses_config_log_level(self, mock_config):
         """Test that setup_logging uses log level from config."""
         mock_config.log_level = "DEBUG"
+        mock_config.log_to_file = False
         
         # Setup logging
         setup_logging()
@@ -344,3 +349,152 @@ class TestSetupLogging:
         # Verify log level is set correctly
         root_logger = logging.getLogger()
         assert root_logger.level == logging.DEBUG
+
+
+class TestFileLogging:
+    """Test cases for file logging functionality."""
+    
+    def setup_method(self):
+        """Set up test environment before each test."""
+        self.temp_dir = tempfile.mkdtemp()
+        
+        # Mock config to use temp directory
+        self.config_patcher = patch('emb_model_provider.core.logging.config')
+        self.mock_config = self.config_patcher.start()
+        self.mock_config.log_level = "INFO"
+        self.mock_config.log_to_file = True
+        self.mock_config.log_dir = self.temp_dir
+        self.mock_config.log_file_max_size = 10
+        self.mock_config.log_retention_days = 7
+        self.mock_config.log_cleanup_interval_hours = 1
+        self.mock_config.log_max_dir_size_mb = 5
+        self.mock_config.log_cleanup_retention_days = [7, 3, 1]
+    
+    def teardown_method(self):
+        """Clean up after each test."""
+        self.config_patcher.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+        shutdown_logging()  # Clean up log manager
+    
+    def test_setup_logging_creates_file_handlers(self):
+        """Test that setup_logging creates file handlers when enabled."""
+        # Mock log manager
+        with patch('emb_model_provider.core.logging.log_manager') as mock_manager:
+            setup_logging()
+            
+            # Verify log manager was initialized
+            mock_manager.initialize.assert_called_once()
+            
+            # Verify file handlers were added
+            root_logger = logging.getLogger()
+            handler_count = len(root_logger.handlers)
+            assert handler_count >= 2  # Console + at least one file handler
+    
+    def test_setup_logging_skips_file_handlers_when_disabled(self):
+        """Test that setup_logging skips file handlers when disabled."""
+        self.mock_config.log_to_file = False
+        
+        # Mock log manager
+        with patch('emb_model_provider.core.logging.log_manager') as mock_manager:
+            setup_logging()
+            
+            # Verify log manager was not initialized
+            mock_manager.initialize.assert_not_called()
+    
+    def test_file_logging_creates_log_files(self):
+        """Test that file logging actually creates log files."""
+        # Setup logging with file output
+        setup_logging()
+        
+        # Log a message
+        logger = logging.getLogger("test_file_logging")
+        logger.info("Test message for file logging")
+        
+        # Check that log files were created
+        log_dir = Path(self.temp_dir)
+        log_files = list(log_dir.glob("*.log"))
+        assert len(log_files) > 0
+        
+        # Check that log file contains our message
+        for log_file in log_files:
+            content = log_file.read_text()
+            if "Test message for file logging" in content:
+                # Parse JSON and verify structure
+                log_data = json.loads(content.strip())
+                assert log_data["level"] == "INFO"
+                assert log_data["message"] == "Test message for file logging"
+                assert "timestamp" in log_data
+                break
+        else:
+            pytest.fail("Log message not found in any log file")
+    
+    def test_file_logging_separates_by_level(self):
+        """Test that log files are separated by level."""
+        # Setup logging with file output
+        setup_logging()
+        
+        # Log messages at different levels
+        logger = logging.getLogger("test_level_separation")
+        logger.debug("Debug message")
+        logger.info("Info message")
+        logger.warning("Warning message")
+        logger.error("Error message")
+        
+        # Check that different log files exist for different levels
+        log_dir = Path(self.temp_dir)
+        log_files = list(log_dir.glob("*.log"))
+        
+        # Should have files for different levels
+        level_files = {}
+        for log_file in log_files:
+            if "debug" in log_file.name.lower():
+                level_files["DEBUG"] = log_file
+            elif "info" in log_file.name.lower():
+                level_files["INFO"] = log_file
+            elif "warning" in log_file.name.lower():
+                level_files["WARNING"] = log_file
+            elif "error" in log_file.name.lower():
+                level_files["ERROR"] = log_file
+        
+        # Verify messages are in the correct files
+        if "INFO" in level_files:
+            content = level_files["INFO"].read_text()
+            assert "Info message" in content
+        
+        if "ERROR" in level_files:
+            content = level_files["ERROR"].read_text()
+            assert "Error message" in content
+    
+    def test_shutdown_logging_cleans_up_resources(self):
+        """Test that shutdown_logging properly cleans up resources."""
+        # Setup logging
+        setup_logging()
+        
+        # Mock log manager
+        with patch('emb_model_provider.core.logging.log_manager') as mock_manager:
+            shutdown_logging()
+            
+            # Verify shutdown was called
+            mock_manager.shutdown.assert_called_once()
+    
+    def test_file_logging_with_request_id(self):
+        """Test that file logging preserves request ID."""
+        # Setup logging with file output
+        setup_logging()
+        
+        # Log a message with request ID
+        logger = logging.getLogger("test_request_id")
+        logger.info("Test message with request ID", extra={"request_id": "test-123"})
+        
+        # Check that log file contains request ID
+        log_dir = Path(self.temp_dir)
+        log_files = list(log_dir.glob("*.log"))
+        
+        for log_file in log_files:
+            content = log_file.read_text()
+            if "Test message with request ID" in content:
+                log_data = json.loads(content.strip())
+                assert log_data["request_id"] == "test-123"
+                break
+        else:
+            pytest.fail("Log message not found in any log file")

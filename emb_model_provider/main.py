@@ -1,16 +1,20 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from emb_model_provider.core.config import config
-from emb_model_provider.core.logging import setup_logging
+from emb_model_provider.core.logging import setup_logging, shutdown_logging
 from emb_model_provider.api.embeddings import router as embeddings_router
 from emb_model_provider.api.models import router as models_router
 from emb_model_provider.api.middleware import exception_handlers, global_exception_handler
 import uvicorn
 import logging
+import atexit
 
 
 # 设置日志
 setup_logging()
+
+# 注册退出处理函数
+atexit.register(shutdown_logging)
 
 
 # 创建FastAPI应用实例

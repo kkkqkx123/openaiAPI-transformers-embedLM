@@ -6,7 +6,7 @@ to load configuration from environment variables and .env files.
 """
 
 import os
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
 from pydantic import Field
@@ -121,6 +121,62 @@ class Config(BaseSettings):
         pattern="^(DEBUG|INFO|WARNING|ERROR)$",
         description="Logging level"
     )
+    
+    # File logging configuration
+    log_to_file: bool = Field(
+        default=True,
+        description="Enable logging to files"
+    )
+    log_dir: str = Field(
+        default="logs",
+        description="Directory to store log files"
+    )
+    log_file_max_size: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum size of a single log file in MB"
+    )
+    log_retention_days: int = Field(
+        default=7,
+        ge=1,
+        le=30,
+        description="Default number of days to retain log files"
+    )
+    log_cleanup_interval_hours: int = Field(
+        default=1,
+        ge=1,
+        le=24,
+        description="Interval in hours for log cleanup checks"
+    )
+    log_max_dir_size_mb: int = Field(
+        default=50,
+        ge=1,
+        le=1000,
+        description="Maximum total size of log directory in MB before cleanup"
+    )
+    log_cleanup_target_size_mb: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Target size in MB after cleanup (should be less than log_max_dir_size_mb)"
+    )
+    log_cleanup_retention_days: str = Field(
+        default="7,3,1",
+        description="Retention days to try during cleanup (comma-separated)"
+    )
+    
+    def get_log_cleanup_retention_days(self) -> List[int]:
+        """
+        Parse the log cleanup retention days from string to list.
+        
+        Returns:
+            List[int]: List of retention days
+        """
+        try:
+            return [int(x.strip()) for x in self.log_cleanup_retention_days.split(',')]
+        except (ValueError, AttributeError):
+            return [7, 3, 1]  # Default fallback
         
     @classmethod
     def from_env(cls, env_file: Optional[str] = None) -> "Config":
@@ -203,6 +259,14 @@ class Config(BaseSettings):
         """
         return {
             "log_level": self.log_level,
+            "log_to_file": self.log_to_file,
+            "log_dir": self.log_dir,
+            "log_file_max_size": self.log_file_max_size,
+            "log_retention_days": self.log_retention_days,
+            "log_cleanup_interval_hours": self.log_cleanup_interval_hours,
+            "log_max_dir_size_mb": self.log_max_dir_size_mb,
+            "log_cleanup_target_size_mb": self.log_cleanup_target_size_mb,
+            "log_cleanup_retention_days": self.get_log_cleanup_retention_days(),
         }
 
 
