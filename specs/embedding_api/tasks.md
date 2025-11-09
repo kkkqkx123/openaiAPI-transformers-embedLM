@@ -41,9 +41,9 @@
   - 参考: 设计文档中的测试策略
 
 ### 5. API 数据模型
-- [ ] 5.1 在 `emb_model_provider/api/v1/embeddings.py` 中定义请求和响应 Pydantic 模型
+- [ ] 5.1 在 `emb_model_provider/api/embeddings.py` 中定义请求和响应 Pydantic 模型
   - 参考: 设计文档中的 Pydantic 模型定义
-- [ ] 5.2 在 `emb_model_provider/api/v1/models.py` 中定义模型相关的 Pydantic 模型
+- [ ] 5.2 在 `emb_model_provider/api/models.py` 中定义模型相关的 Pydantic 模型
   - 参考: 设计文档中的 Pydantic 模型定义
 - [ ] 5.3 为数据模型编写单元测试
   - 参考: 设计文档中的测试策略
@@ -61,9 +61,9 @@
   - 参考: 设计文档中的测试策略
 
 ### 7. API 路由实现
-- [ ] 7.1 在 `emb_model_provider/api/v1/embeddings.py` 中实现 `/v1/embeddings` 端点
+- [ ] 7.1 在 `emb_model_provider/api/embeddings.py` 中实现 `/v1/embeddings` 端点
   - 参考: 需求 UB-1.1, UB-1.2, UB-1.3
-- [ ] 7.2 在 `emb_model_provider/api/v1/models.py` 中实现 `/v1/models` 端点
+- [ ] 7.2 在 `emb_model_provider/api/models.py` 中实现 `/v1/models` 端点
   - 参考: 需求 UB-1.4
 - [ ] 7.3 实现错误处理中间件
   - 参考: 设计文档中的错误处理

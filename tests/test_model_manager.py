@@ -1,0 +1,530 @@
+"""
+Unit tests for the model manager module.
+"""
+
+import os
+import pickle
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch, mock_open
+
+import pytest
+import torch
+
+from emb_model_provider.core.model_manager import ModelManager
+
+
+class TestModelManager:
+    """Test cases for ModelManager class."""
+    
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.model_path = os.path.join(self.temp_dir, "test_model")
+        self.model_name = "test-model"
+        
+        # Create mock model files
+        os.makedirs(self.model_path, exist_ok=True)
+        
+        # Create required model files
+        with open(os.path.join(self.model_path, "config.json"), "w") as f:
+            f.write('{"model_type": "bert"}')
+        
+        with open(os.path.join(self.model_path, "pytorch_model.bin"), "wb") as f:
+            f.write(b"dummy model data")
+        
+        with open(os.path.join(self.model_path, "tokenizer.json"), "w") as f:
+            f.write('{"vocab": {"test": 0}}')
+        
+        with open(os.path.join(self.model_path, "tokenizer_config.json"), "w") as f:
+            f.write('{"name": "test-tokenizer"}')
+    
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_init_with_defaults(self, mock_config):
+        """Test ModelManager initialization with default values."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.device = "auto"
+        
+        manager = ModelManager()
+        
+        assert manager.model_path == self.model_path
+        assert manager.model_name == self.model_name
+        assert not manager._model_loaded
+        assert manager._model is None
+        assert manager._tokenizer is None
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_init_with_custom_values(self, mock_config):
+        """Test ModelManager initialization with custom values."""
+        custom_path = os.path.join(self.temp_dir, "custom_model")
+        custom_name = "custom-model"
+        
+        manager = ModelManager(model_path=custom_path, model_name=custom_name)
+        
+        assert manager.model_path == custom_path
+        assert manager.model_name == custom_name
+    
+    @patch('emb_model_provider.core.model_manager.torch.cuda.is_available')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_get_device_cuda_available(self, mock_config, mock_cuda_available):
+        """Test device selection when CUDA is available."""
+        mock_config.device = "auto"
+        mock_cuda_available.return_value = True
+        
+        manager = ModelManager()
+        device = manager._get_device()
+        
+        assert device == "cuda"
+    
+    @patch('emb_model_provider.core.model_manager.torch.cuda.is_available')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_get_device_cpu_only(self, mock_config, mock_cuda_available):
+        """Test device selection when only CPU is available."""
+        mock_config.device = "auto"
+        mock_cuda_available.return_value = False
+        
+        manager = ModelManager()
+        device = manager._get_device()
+        
+        assert device == "cpu"
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_get_device_explicit(self, mock_config):
+        """Test device selection with explicit device setting."""
+        mock_config.device = "cpu"
+        
+        manager = ModelManager()
+        device = manager._get_device()
+        
+        assert device == "cpu"
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_is_model_available_locally_true(self, mock_config):
+        """Test checking if model is available locally - positive case."""
+        mock_config.model_path = self.model_path
+        
+        manager = ModelManager()
+        available = manager._is_model_available_locally()
+        
+        assert available is True
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_is_model_available_locally_false(self, mock_config):
+        """Test checking if model is available locally - negative case."""
+        empty_path = os.path.join(self.temp_dir, "empty_model")
+        mock_config.model_path = empty_path
+        
+        manager = ModelManager()
+        available = manager._is_model_available_locally()
+        
+        assert available is False
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_is_model_available_locally_with_safetensors(self, mock_config):
+        """Test checking if model is available locally with safetensors."""
+        # Create model with safetensors instead of pytorch_model.bin
+        safetensors_path = os.path.join(self.temp_dir, "safetensors_model")
+        os.makedirs(safetensors_path, exist_ok=True)
+        
+        with open(os.path.join(safetensors_path, "config.json"), "w") as f:
+            f.write('{"model_type": "bert"}')
+        
+        with open(os.path.join(safetensors_path, "model.safetensors"), "wb") as f:
+            f.write(b"dummy model data")
+        
+        with open(os.path.join(safetensors_path, "tokenizer.json"), "w") as f:
+            f.write('{"vocab": {"test": 0}}')
+        
+        mock_config.model_path = safetensors_path
+        
+        manager = ModelManager()
+        available = manager._is_model_available_locally()
+        
+        assert available is True
+    
+    @patch('emb_model_provider.core.model_manager.AutoTokenizer')
+    @patch('emb_model_provider.core.model_manager.AutoModel')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_local_model_success(self, mock_config, mock_auto_model, mock_auto_tokenizer):
+        """Test successful local model loading."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        
+        # Create mock model and tokenizer
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+        # Make the to() method return the same mock object
+        mock_model.to.return_value = mock_model
+        mock_auto_model.from_pretrained.return_value = mock_model
+        mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
+        
+        manager = ModelManager()
+        manager._load_local_model()
+        
+        assert manager._model_loaded is True
+        assert manager._model == mock_model
+        assert manager._tokenizer == mock_tokenizer
+        
+        # Verify model was moved to device
+        mock_model.to.assert_called_once()
+        mock_model.eval.assert_called_once()
+    
+    @patch('emb_model_provider.core.model_manager.snapshot_download')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_download_model_success(self, mock_config, mock_snapshot_download):
+        """Test successful model download."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        
+        manager = ModelManager()
+        manager._download_model()
+        
+        mock_snapshot_download.assert_called_once_with(
+            repo_id=self.model_name,
+            local_dir=self.model_path,
+            local_dir_use_symlinks=False
+        )
+    
+    @patch('emb_model_provider.core.model_manager.snapshot_download')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_download_model_failure(self, mock_config, mock_snapshot_download):
+        """Test model download failure."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_snapshot_download.side_effect = Exception("Download failed")
+        
+        manager = ModelManager()
+        
+        with pytest.raises(RuntimeError, match="Failed to download model"):
+            manager._download_model()
+    
+    @patch.object(ModelManager, '_load_local_model')
+    @patch.object(ModelManager, '_download_model')
+    @patch.object(ModelManager, '_is_model_available_locally')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_model_local_available(self, mock_config, mock_is_available, mock_download, mock_load_local):
+        """Test loading model when it's available locally."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_is_available.return_value = True
+        
+        manager = ModelManager()
+        manager.load_model()
+        
+        mock_is_available.assert_called_once()
+        mock_load_local.assert_called_once()
+        mock_download.assert_not_called()
+    
+    @patch.object(ModelManager, '_load_local_model')
+    @patch.object(ModelManager, '_download_model')
+    @patch.object(ModelManager, '_is_model_available_locally')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_model_download_required(self, mock_config, mock_is_available, mock_download, mock_load_local):
+        """Test loading model when download is required."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_is_available.return_value = False
+        
+        manager = ModelManager()
+        manager.load_model()
+        
+        mock_is_available.assert_called_once()
+        mock_download.assert_called_once()
+        mock_load_local.assert_called_once()
+    
+    @patch.object(ModelManager, '_load_local_model')
+    @patch.object(ModelManager, '_is_model_available_locally')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_model_already_loaded(self, mock_config, mock_is_available, mock_load_local):
+        """Test loading model when it's already loaded."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        
+        manager = ModelManager()
+        manager._model_loaded = True
+        manager.load_model()
+        
+        mock_is_available.assert_not_called()
+        mock_load_local.assert_not_called()
+    
+    @patch.object(ModelManager, '_mean_pooling')
+    @patch.object(ModelManager, '_tokenize_inputs')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_generate_embeddings_single_input(self, mock_config, mock_tokenize, mock_mean_pooling):
+        """Test generating embeddings for a single input."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_batch_size = 32
+        
+        # Set up mock model and tokenizer
+        manager = ModelManager()
+        manager._model_loaded = True
+        manager._model = MagicMock()
+        manager._tokenizer = MagicMock()
+        
+        # Mock tokenization
+        mock_tokenized = {
+            "input_ids": torch.tensor([[1, 2, 3]]),
+            "attention_mask": torch.tensor([[1, 1, 1]])
+        }
+        mock_tokenize.return_value = mock_tokenized
+        
+        # Mock model output and pooling
+        mock_model_output = [torch.tensor([[[0.1, 0.2, 0.3]]])]
+        manager._model.return_value = mock_model_output
+        mock_mean_pooling.return_value = torch.tensor([[0.1, 0.2, 0.3]])
+        
+        # Generate embeddings
+        result = manager.generate_embeddings("test input")
+        
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], list)
+        assert len(result[0]) == 3
+    
+    @patch.object(ModelManager, '_mean_pooling')
+    @patch.object(ModelManager, '_tokenize_inputs')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_generate_embeddings_multiple_inputs(self, mock_config, mock_tokenize, mock_mean_pooling):
+        """Test generating embeddings for multiple inputs."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_batch_size = 32
+        
+        # Set up mock model and tokenizer
+        manager = ModelManager()
+        manager._model_loaded = True
+        manager._model = MagicMock()
+        manager._tokenizer = MagicMock()
+        
+        # Mock tokenization
+        mock_tokenized = {
+            "input_ids": torch.tensor([[1, 2, 3], [4, 5, 6]]),
+            "attention_mask": torch.tensor([[1, 1, 1], [1, 1, 1]])
+        }
+        mock_tokenize.return_value = mock_tokenized
+        
+        # Mock model output and pooling
+        mock_model_output = [torch.tensor([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]])]
+        manager._model.return_value = mock_model_output
+        mock_mean_pooling.return_value = torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+        
+        # Generate embeddings
+        result = manager.generate_embeddings(["input 1", "input 2"])
+        
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(isinstance(emb, list) for emb in result)
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_generate_embeddings_model_not_loaded(self, mock_config):
+        """Test generating embeddings when model is not loaded."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        
+        manager = ModelManager()
+        
+        with pytest.raises(RuntimeError, match="Model is not loaded"):
+            manager.generate_embeddings("test input")
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_generate_embeddings_empty_inputs(self, mock_config):
+        """Test generating embeddings with empty inputs."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        
+        manager = ModelManager()
+        manager._model_loaded = True
+        
+        with pytest.raises(ValueError, match="Inputs cannot be empty"):
+            manager.generate_embeddings([])
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_generate_embeddings_batch_size_exceeded(self, mock_config):
+        """Test generating embeddings with batch size exceeded."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_batch_size = 2
+        
+        manager = ModelManager()
+        manager._model_loaded = True
+        
+        with pytest.raises(ValueError, match="Batch size 3 exceeds maximum 2"):
+            manager.generate_embeddings(["input 1", "input 2", "input 3"])
+    
+    @patch.object(ModelManager, 'generate_embeddings')
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_generate_batch_embeddings(self, mock_config, mock_generate_embeddings):
+        """Test batch embedding generation."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_batch_size = 2
+        
+        # Mock generate_embeddings to return different results for each batch
+        def mock_generate(inputs):
+            return [[float(i)] for i in range(len(inputs))]
+        
+        mock_generate_embeddings.side_effect = mock_generate
+        
+        manager = ModelManager()
+        manager._model_loaded = True
+        
+        # Generate batch embeddings
+        inputs = ["input 1", "input 2", "input 3", "input 4", "input 5"]
+        result = manager.generate_batch_embeddings(inputs)
+        
+        assert len(result) == 5
+        assert result == [[0.0], [1.0], [0.0], [1.0], [0.0]]
+        
+        # Verify generate_embeddings was called correct number of times
+        assert mock_generate_embeddings.call_count == 3
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_get_model_info_not_loaded(self, mock_config):
+        """Test getting model info when model is not loaded."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        
+        manager = ModelManager()
+        
+        info = manager.get_model_info()
+        
+        assert info["model_name"] == self.model_name
+        assert info["model_path"] == self.model_path
+        assert info["loaded"] is False
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_get_model_info_loaded(self, mock_config):
+        """Test getting model info when model is loaded."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        
+        manager = ModelManager()
+        manager._model_loaded = True
+        manager._model = MagicMock()
+        manager._model.config.model_type = "bert"
+        manager._tokenizer = MagicMock()
+        manager._tokenizer.vocab_size = 30000
+        
+        info = manager.get_model_info()
+        
+        assert info["model_name"] == self.model_name
+        assert info["model_path"] == self.model_path
+        assert info["loaded"] is True
+        assert info["max_context_length"] == 512
+        assert info["embedding_dimension"] == 384
+        assert info["vocab_size"] == 30000
+        assert info["model_type"] == "bert"
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_save_embeddings_cache(self, mock_config):
+        """Test saving embeddings cache."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        
+        manager = ModelManager()
+        
+        embeddings = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        inputs = ["input 1", "input 2"]
+        cache_path = os.path.join(self.temp_dir, "cache.pkl")
+        
+        manager.save_embeddings_cache(embeddings, inputs, cache_path)
+        
+        # Verify cache file was created
+        assert os.path.exists(cache_path)
+        
+        # Verify cache content
+        with open(cache_path, 'rb') as f:
+            cache_data = pickle.load(f)
+        
+        assert cache_data["inputs"] == inputs
+        assert cache_data["embeddings"] == embeddings
+        assert cache_data["model_name"] == self.model_name
+        assert cache_data["config"]["max_context_length"] == 512
+        assert cache_data["config"]["embedding_dimension"] == 384
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_embeddings_cache_success(self, mock_config):
+        """Test loading embeddings cache successfully."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        
+        manager = ModelManager()
+        
+        # Create cache file
+        cache_data = {
+            "inputs": ["input 1", "input 2"],
+            "embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+            "model_name": self.model_name,
+            "config": {
+                "max_context_length": 512,
+                "embedding_dimension": 384
+            }
+        }
+        
+        cache_path = os.path.join(self.temp_dir, "cache.pkl")
+        with open(cache_path, 'wb') as f:
+            pickle.dump(cache_data, f)
+        
+        # Load cache
+        result = manager.load_embeddings_cache(cache_path)
+        
+        assert result == cache_data
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_embeddings_cache_incompatible(self, mock_config):
+        """Test loading incompatible embeddings cache."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = "different-model"
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        
+        manager = ModelManager()
+        
+        # Create cache file with different model name
+        cache_data = {
+            "inputs": ["input 1", "input 2"],
+            "embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
+            "model_name": "original-model",
+            "config": {
+                "max_context_length": 512,
+                "embedding_dimension": 384
+            }
+        }
+        
+        cache_path = os.path.join(self.temp_dir, "cache.pkl")
+        with open(cache_path, 'wb') as f:
+            pickle.dump(cache_data, f)
+        
+        # Load cache should return None for incompatible cache
+        result = manager.load_embeddings_cache(cache_path)
+        
+        assert result is None
+    
+    @patch('emb_model_provider.core.model_manager.config')
+    def test_load_embeddings_cache_file_not_found(self, mock_config):
+        """Test loading embeddings cache when file doesn't exist."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
+        
+        manager = ModelManager()
+        
+        # Try to load non-existent cache file
+        cache_path = os.path.join(self.temp_dir, "nonexistent.pkl")
+        result = manager.load_embeddings_cache(cache_path)
+        
+        assert result is None
