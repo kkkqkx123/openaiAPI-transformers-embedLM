@@ -2,10 +2,10 @@ version: '3.8'
 
 services:
   emb-model-provider:
-    build:
+    build: 
       context: .
-      dockerfile: Dockerfile
-    container_name: emb-model-provider
+      dockerfile: Dockerfile.gpu
+    container_name: emb-model-provider-gpu
     ports:
       - "9000:9000"
     volumes:
@@ -19,13 +19,13 @@ services:
       - EMB_PROVIDER_MODEL_NAME=all-MiniLM-L12-v2
       
       # 处理配置
-      - EMB_PROVIDER_MAX_BATCH_SIZE=32
+      - EMB_PROVIDER_MAX_BATCH_SIZE=64  # GPU可以处理更大的批次
       - EMB_PROVIDER_MAX_CONTEXT_LENGTH=512
       - EMB_PROVIDER_EMBEDDING_DIMENSION=384
       
       # 资源配置
-      - EMB_PROVIDER_MEMORY_LIMIT=2GB
-      - EMB_PROVIDER_DEVICE=cpu
+      - EMB_PROVIDER_MEMORY_LIMIT=8GB  # GPU版本通常有更多内存
+      - EMB_PROVIDER_DEVICE=cuda  # 使用GPU
       
       # API 配置
       - EMB_PROVIDER_HOST=0.0.0.0
@@ -48,6 +48,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
 volumes:
   prometheus_data:

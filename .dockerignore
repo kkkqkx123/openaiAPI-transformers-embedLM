@@ -1,0 +1,88 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+DOCKER_SETUP.md
+LOGGING.md
+QWEN.md
+AGENTS.md
+*.md
+
+# Docker
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Virtual environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+.env
+.env.*
+models/
+logs/
+data/
+*.pkl
+*.joblib
+*.bin
+*.onnx
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Development tools
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.temp
