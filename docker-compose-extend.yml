@@ -13,8 +13,11 @@ services:
       - ./logs:/app/logs
     environment:
       # 模型配置
-      - EMB_PROVIDER_MODEL_PATH=/models/all-MiniLM-L12-v2
-      - EMB_PROVIDER_MODEL_NAME=all-MiniLM-L12-v2
+      - EMB_PROVIDER_MODEL_PATH=/models/multilingual-MiniLM-L12-v2
+      - EMB_PROVIDER_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - EMB_PROVIDER_LOAD_FROM_TRANSFORMERS=false
+      - EMB_PROVIDER_TRANSFORMERS_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - EMB_PROVIDER_TRANSFORMERS_TRUST_REMOTE_CODE=false
       
       # 处理配置
       - EMB_PROVIDER_MAX_BATCH_SIZE=32
