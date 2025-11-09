@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "emb-model-provider"
+version = "0.1.0"
+description = "OpenAI compatible embedding model API provider"
+authors = [{ name = "Embedding API Team", email = "team@example.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "numpy>=2.2.0",
+    "torch>=2.9.0",
+    "transformers",
+    "fastapi",
+    "pydantic",
+    "pydantic-settings",
+    "uvicorn",
+    "python-multipart",
+    "pytest>=7.0.0",
+    "pytest-asyncio",
+    "httpx",
+    "black",
+    "isort",
+    "flake8",
+    "mypy",
+
+]
+
+[project.optional-dependencies]
+dev = []
+
+[project.urls]
+Homepage = "https://github.com/example/emb-model-provider"
+Repository = "https://github.com/example/emb-model-provider.git"
+Issues = "https://github.com/example/emb-model-provider/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["emb_model_provider*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
