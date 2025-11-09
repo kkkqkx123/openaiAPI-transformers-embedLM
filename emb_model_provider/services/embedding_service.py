@@ -2,8 +2,8 @@ from typing import List, Union
 from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
-from emb_model_provider.api.v1.embeddings import EmbeddingRequest, EmbeddingResponse, EmbeddingData, Usage
-from emb_model_provider.api.v1.exceptions import EmbeddingAPIError, BatchSizeExceededError, ContextLengthExceededError
+from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingResponse, EmbeddingData, Usage
+from emb_model_provider.api.exceptions import EmbeddingAPIError, BatchSizeExceededError, ContextLengthExceededError
 from emb_model_provider.core.config import Config
 import os
 import time
@@ -18,6 +18,7 @@ class EmbeddingService:
     def __init__(self, config: Config):
         self.config = config
         self.model_manager = ModelManager(config.model_path)
+        self.model_manager.load_model()  # 显式加载模型
         self.tokenizer = self.model_manager.tokenizer
         self.model = self.model_manager.model
         
@@ -27,7 +28,6 @@ class EmbeddingService:
         """
         # 检查输入是否为空
         if not request.input:
-            from emb_model_provider.api.v1.exceptions import EmbeddingAPIError
             raise EmbeddingAPIError(
                 message="Input cannot be empty.",
                 error_type="invalid_request_error",
@@ -39,7 +39,6 @@ class EmbeddingService:
         
         # 检查批处理大小是否超出限制
         if len(inputs) > self.config.max_batch_size:
-            from emb_model_provider.api.v1.exceptions import BatchSizeExceededError
             raise BatchSizeExceededError(
                 max_size=self.config.max_batch_size,
                 actual_size=len(inputs)
@@ -49,7 +48,6 @@ class EmbeddingService:
         for input_text in inputs:
             tokens = self.tokenizer.encode(input_text, add_special_tokens=True)
             if len(tokens) > self.config.max_context_length:
-                from emb_model_provider.api.v1.exceptions import ContextLengthExceededError
                 raise ContextLengthExceededError(
                     max_length=self.config.max_context_length,
                     actual_length=len(tokens)

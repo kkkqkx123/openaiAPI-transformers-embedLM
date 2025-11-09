@@ -1,7 +1,7 @@
 import pytest
 from typing import List
-from emb_model_provider.api.v1.embeddings import EmbeddingRequest, EmbeddingData, Usage, EmbeddingResponse
-from emb_model_provider.api.v1.models import ModelInfo, ModelsResponse
+from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingData, Usage, EmbeddingResponse
+from emb_model_provider.api.models import ModelInfo, ModelsResponse
 
 
 class TestEmbeddingRequest:

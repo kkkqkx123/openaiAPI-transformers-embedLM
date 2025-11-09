@@ -2,9 +2,9 @@ import pytest
 import torch
 from unittest.mock import Mock, patch
 from emb_model_provider.services.embedding_service import EmbeddingService
-from emb_model_provider.api.v1.embeddings import EmbeddingRequest
+from emb_model_provider.api.embeddings import EmbeddingRequest
 from emb_model_provider.core.config import Config
-from emb_model_provider.api.v1.exceptions import EmbeddingAPIError, BatchSizeExceededError, ContextLengthExceededError
+from emb_model_provider.api.exceptions import EmbeddingAPIError, BatchSizeExceededError, ContextLengthExceededError
 
 
 class TestEmbeddingService:
