@@ -18,11 +18,11 @@ import torch
 class Config(BaseSettings):
     """
     Configuration model for the embedding model provider.
-    
+
     This class defines all configuration parameters with their default values
     and environment variable mappings.
     """
-    
+
     model_config = SettingsConfigDict(
         env_prefix="EMB_PROVIDER_",
         case_sensitive=False,
@@ -30,24 +30,30 @@ class Config(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8"
     )
-    
+
     # Model configuration
     model_path: str = Field(
-        default="D:\\models\\all-MiniLM-L12-v2",
+        default="D:\\models\\multilingual-MiniLM-L12-v2",
         description="Path to the model directory"
     )
     model_name: str = Field(
-        default="all-MiniLM-L12-v2",
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         description="Name of the model"
     )
-    
+
+    # Model aliases configuration
+    model_aliases: str = Field(
+        default="",
+        description="Comma-separated list of model aliases in format alias1:actual_model_name1,alias2:actual_model_name2"
+    )
+
     # Transformers model loading configuration
     load_from_transformers: bool = Field(
         default=False,
         description="Whether to load model directly from transformers without local caching"
     )
     transformers_model_name: str = Field(
-        default="sentence-transformers/all-MiniLM-L12-v2",
+        default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         description="Model name to load directly from transformers (used when load_from_transformers=True)"
     )
     transformers_cache_dir: Optional[str] = Field(
@@ -58,7 +64,7 @@ class Config(BaseSettings):
         default=False,
         description="Whether to trust remote code when loading from transformers"
     )
-    
+
     # Processing configuration
     max_batch_size: int = Field(
         default=32,
@@ -66,33 +72,40 @@ class Config(BaseSettings):
         le=512,  # 提高最大限制以支持高端GPU
         description="Maximum batch size for processing"
     )
-    
+
     # Dynamic batch processing configuration
     enable_dynamic_batching: bool = Field(
         default=True,
         description="Enable dynamic batch processing for better throughput"
     )
-    
+
     max_wait_time_ms: int = Field(
         default=100,
         ge=10,
         le=1000,
         description="Maximum wait time in milliseconds for dynamic batching"
     )
-    
+
+    hard_timeout_additional_seconds: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=10.0,
+        description="Additional timeout in seconds after max_wait_time to force processing of small batches"
+    )
+
     min_batch_size: int = Field(
         default=1,
         ge=1,
         le=32,
         description="Minimum batch size for dynamic batching"
     )
-    
+
     # Memory optimization configuration
     enable_length_grouping: bool = Field(
         default=True,
         description="Enable length-based grouping to reduce padding overhead"
     )
-    
+
     length_group_tolerance: float = Field(
         default=0.2,
         ge=0.1,
@@ -110,7 +123,7 @@ class Config(BaseSettings):
         ge=1,
         description="Dimension of the embedding vectors"
     )
-    
+
     # Resource configuration
     memory_limit: str = Field(
         default="2GB",
@@ -120,7 +133,7 @@ class Config(BaseSettings):
         default="auto",
         description="Device to run the model on (auto, cpu, cuda)"
     )
-    
+
     # API configuration
     host: str = Field(
         default="localhost",
@@ -132,14 +145,14 @@ class Config(BaseSettings):
         le=65535,
         description="Port to bind the API server"
     )
-    
+
     # Logging configuration
     log_level: str = Field(
         default="INFO",
         pattern="^(DEBUG|INFO|WARNING|ERROR)$",
         description="Logging level"
     )
-    
+
     # File logging configuration
     log_to_file: bool = Field(
         default=True,
@@ -183,11 +196,11 @@ class Config(BaseSettings):
         default="7,3,1",
         description="Retention days to try during cleanup (comma-separated)"
     )
-    
+
     def get_log_cleanup_retention_days(self) -> List[int]:
         """
         Parse the log cleanup retention days from string to list.
-        
+
         Returns:
             List[int]: List of retention days
         """
@@ -195,43 +208,43 @@ class Config(BaseSettings):
             return [int(x.strip()) for x in self.log_cleanup_retention_days.split(',')]
         except (ValueError, AttributeError):
             return [7, 3, 1]  # Default fallback
-        
+
     @classmethod
     def from_env(cls, env_file: Optional[str] = None) -> "Config":
         """
         Load configuration from environment variables and optionally from a .env file.
-        
+
         Args:
             env_file: Optional path to a .env file to load configuration from
-            
+
         Returns:
             Config: Configuration instance with values from environment variables
         """
         if env_file:
             return cls(_env_file=env_file)
         return cls()
-    
+
     @classmethod
     def load_from_file(cls, env_file: str) -> "Config":
         """
         Load configuration from a specific .env file.
-        
+
         Args:
             env_file: Path to the .env file
-            
+
         Returns:
             Config: Configuration instance with values from the specified file
         """
         env_path = Path(env_file)
         if not env_path.exists():
             raise FileNotFoundError(f"Environment file not found: {env_file}")
-        
+
         return cls(_env_file=str(env_path.absolute()))
-    
+
     def get_model_config(self) -> dict:
         """
         Get model-related configuration.
-        
+
         Returns:
             dict: Model configuration parameters
         """
@@ -246,11 +259,11 @@ class Config(BaseSettings):
             "transformers_cache_dir": self.transformers_cache_dir,
             "transformers_trust_remote_code": self.transformers_trust_remote_code,
         }
-    
+
     def get_api_config(self) -> dict:
         """
         Get API-related configuration.
-        
+
         Returns:
             dict: API configuration parameters
         """
@@ -258,11 +271,11 @@ class Config(BaseSettings):
             "host": self.host,
             "port": self.port,
         }
-    
+
     def get_processing_config(self) -> dict:
         """
         Get processing-related configuration.
-        
+
         Returns:
             dict: Processing configuration parameters
         """
@@ -271,11 +284,11 @@ class Config(BaseSettings):
             "max_context_length": self.max_context_length,
             "memory_limit": self.memory_limit,
         }
-    
+
     def get_logging_config(self) -> dict:
         """
         Get logging-related configuration.
-        
+
         Returns:
             dict: Logging configuration parameters
         """
@@ -295,14 +308,14 @@ class Config(BaseSettings):
     def get_optimal_batch_size(self) -> int:
         """
         根据GPU内存自动计算最优批处理大小
-        
+
         Returns:
             int: 最优批处理大小
         """
         if torch.cuda.is_available():
             gpu_props = torch.cuda.get_device_properties(0)
             gpu_memory_gb = gpu_props.total_memory / (1024**3)
-            
+
             # 根据GPU内存大小估算最优批处理大小
             # 基础估算：每个样本大约需要 100-200MB 显存（包括模型和中间结果）
             if gpu_memory_gb >= 24:  # RTX 4090, A100
@@ -315,26 +328,26 @@ class Config(BaseSettings):
                 optimal_size = 32
             else:  # 低端GPU或集成GPU
                 optimal_size = 16
-            
+
             # 确保不超过配置的最大值
             return min(optimal_size, self.max_batch_size)
         else:
             # CPU模式下使用较小的批处理大小
             return min(16, self.max_batch_size)
-    
+
     def optimize_for_hardware(self) -> None:
         """
         根据硬件特性优化配置
         """
         if torch.cuda.is_available():
             gpu_props = torch.cuda.get_device_properties(0)
-            
+
             # 根据GPU架构调整配置
             if gpu_props.major >= 8:  # Ampere架构及以上
                 # 启用更激进的批处理设置
                 if self.max_batch_size < 64:
                     self.max_batch_size = 64
-            
+
             # 根据显存大小调整动态批处理参数
             gpu_memory_gb = gpu_props.total_memory / (1024**3)
             if gpu_memory_gb >= 16:
@@ -343,6 +356,28 @@ class Config(BaseSettings):
             else:
                 self.max_wait_time_ms = 50   # 低端GPU快速处理小批次
                 self.min_batch_size = 1
+
+    def get_model_aliases(self) -> dict:
+        """
+        Parse the model aliases string into a dictionary mapping.
+
+        Returns:
+            dict: Dictionary mapping aliases to actual model names
+        """
+        if not self.model_aliases:
+            return {}
+
+        aliases = {}
+        try:
+            for alias_mapping in self.model_aliases.split(','):
+                if ':' in alias_mapping:
+                    alias, actual_name = alias_mapping.strip().split(':', 1)
+                    aliases[alias.strip()] = actual_name.strip()
+        except Exception:
+            # If there's an error parsing the aliases, return empty dict
+            return {}
+
+        return aliases
 
 
 # Global configuration instance

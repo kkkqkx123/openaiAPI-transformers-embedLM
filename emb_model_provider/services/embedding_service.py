@@ -11,6 +11,8 @@ from emb_model_provider.services.batch_optimizer import BatchProcessingOptimizer
 import os
 import time
 from emb_model_provider.core.model_manager import ModelManager
+from emb_model_provider.services.realtime_batch_processor import RealtimeBatchProcessor
+import asyncio
 
 
 class EmbeddingService:

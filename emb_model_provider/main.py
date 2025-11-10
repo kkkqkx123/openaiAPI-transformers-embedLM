@@ -8,6 +8,7 @@ from emb_model_provider.api.middleware import exception_handlers, global_excepti
 import uvicorn
 import logging
 import atexit
+import asyncio
 
 
 # 设置日志
@@ -68,6 +69,16 @@ async def root():
         "version": "0.1.0",
         "endpoints": ["/v1/embeddings", "/v1/models", "/health"]
     }
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    应用关闭时的清理工作
+    """
+    from emb_model_provider.api.embeddings import realtime_batch_processor
+    if realtime_batch_processor:
+        await realtime_batch_processor.stop()
 
 
 def run_server():
