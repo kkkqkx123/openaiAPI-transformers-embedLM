@@ -7,10 +7,9 @@ to avoid long hangs when processing small batches.
 
 import asyncio
 import time
-from typing import List, Dict, Callable, Any, Optional, Tuple
+from typing import List
 from dataclasses import dataclass
-from threading import Thread, Lock
-import asyncio
+from threading import Lock
 from emb_model_provider.core.logging import get_logger
 from emb_model_provider.core.config import Config
 from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingData
@@ -27,14 +26,6 @@ class BatchRequest:
     timestamp: float
 
 
-@dataclass
-class ProcessedBatchResult:
-    """Result from processing a batch"""
-    results: List[EmbeddingData]
-    start_time: float
-    end_time: float
-
-
 class RealtimeBatchProcessor:
     """
     Real-time batch processor with timeout mechanism to avoid long hangs.
@@ -42,6 +33,7 @@ class RealtimeBatchProcessor:
     Collects incoming requests and processes them in batches. If a sufficient
     number of requests are available, processes immediately. Otherwise, waits
     for a timeout period before processing with whatever requests are available.
+    The implementation uses event-driven scheduling to optimize performance.
     """
     
     def __init__(self, config: Config, embedding_service):
@@ -57,6 +49,9 @@ class RealtimeBatchProcessor:
         self._lock = Lock()
         self._stop_event = asyncio.Event()
         
+        # Event to signal when new requests arrive
+        self._requests_available_event = asyncio.Event()
+        
         # Background task for processing
         self._background_task = None
         
@@ -64,7 +59,8 @@ class RealtimeBatchProcessor:
             f"RealtimeBatchProcessor initialized: "
             f"max_batch_size={self.max_batch_size}, "
             f"min_batch_size={self.min_batch_size}, "
-            f"max_wait_time={self.max_wait_time}s"
+            f"max_wait_time={self.max_wait_time}s, "
+            f"hard_timeout={self.hard_timeout}s"
         )
     
     async def submit_request(self, request: EmbeddingRequest) -> List[EmbeddingData]:
@@ -93,7 +89,10 @@ class RealtimeBatchProcessor:
         
         logger.debug(f"Request submitted, queue size: {len(self._requests)}, should_process_now: {should_process}")
         
-        # Process immediately if conditions are met, otherwise wait
+        # Signal that requests are available
+        self._requests_available_event.set()
+        
+        # Process immediately if conditions are met
         if should_process:
             await self._process_batch()
         
@@ -173,9 +172,41 @@ class RealtimeBatchProcessor:
     async def _process_loop(self):
         """
         Background processing loop that handles timeout-based batch processing.
+        Uses event-driven approach to optimize performance.
         """
         while not self._stop_event.is_set():
             try:
+                # Wait for either new requests or the timeout, whichever comes first
+                # Calculate next timeout based on existing requests
+                sleep_time = 0.01  # Default sleep time if no requests are pending
+                
+                with self._lock:
+                    if self._requests:
+                        # Calculate the time when the oldest request will reach max_wait_time
+                        oldest_timestamp = min(req.timestamp for req in self._requests)
+                        time_to_max_wait = self.max_wait_time - (time.time() - oldest_timestamp)
+                        
+                        # Calculate the time when the oldest request will reach hard_timeout
+                        time_to_hard_timeout = (self.max_wait_time + self.hard_timeout) - (time.time() - oldest_timestamp)
+                        
+                        # Use the shorter of the two as the sleep time
+                        sleep_time = min(time_to_max_wait, time_to_hard_timeout, sleep_time)
+                        
+                        # Ensure sleep_time is positive
+                        sleep_time = max(0.01, sleep_time)
+                
+                # Wait for either new requests or timeout
+                try:
+                    await asyncio.wait_for(
+                        self._requests_available_event.wait(),
+                        timeout=sleep_time
+                    )
+                    # New requests arrived, clear the event and continue
+                    self._requests_available_event.clear()
+                except asyncio.TimeoutError:
+                    # Timeout reached, check if we need to process due to timeout
+                    pass
+                
                 # Check if we should process based on timeout
                 with self._lock:
                     current_size = len(self._requests)
@@ -187,25 +218,20 @@ class RealtimeBatchProcessor:
                             oldest_timestamp = min(req.timestamp for req in self._requests)
                             wait_time = time.time() - oldest_timestamp
                             
-                            # If the oldest request has waited beyond max_wait_time and we have at least 1 request,
-                            # or if we have enough requests for min batch size
+                            # If the oldest request has waited beyond max_wait_time and we have at least min_batch_size,
+                            # or if we have reached max_batch_size, process immediately
                             should_process_regular = (
                                 (wait_time >= self.max_wait_time and current_size >= self.min_batch_size) or
                                 current_size >= self.max_batch_size
                             )
                             
                             # Check for hard timeout - this ensures ANY requests are processed after hard_timeout
-                            # to prevent long hangs for small batches
                             should_process_hard_timeout = wait_time >= (self.max_wait_time + self.hard_timeout)
                             
                             should_process = should_process_regular or should_process_hard_timeout
                             
                     if should_process:
                         await self._process_batch()
-                    # No else clause needed - if not processing, continue waiting
-                
-                # Wait a bit before checking again
-                await asyncio.sleep(0.01)  # 10ms
                 
             except Exception as e:
                 logger.error(f"Error in batch processing loop: {e}")
@@ -220,6 +246,8 @@ class RealtimeBatchProcessor:
         """Stop the background processing loop."""
         if self._background_task:
             self._stop_event.set()
+            # Wake up the processing loop if it's waiting
+            self._requests_available_event.set()
             await self._background_task
             logger.info("RealtimeBatchProcessor stopped")
     
