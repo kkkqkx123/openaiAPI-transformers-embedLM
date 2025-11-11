@@ -32,16 +32,12 @@ dependencies = [
     "psutil",
     "accelerate",
     "apscheduler>=3.10.0",
-]
-[project.optional-dependencies]
-dev = [
-    'black',
-    'isort',
-    'flake8',
     'mypy',
     'pytest>=7.0.0',
     'pytest-asyncio',
 ]
+[project.optional-dependencies]
+dev = ['black', 'isort', 'flake8']
 
 [project.urls]
 Homepage = "https://github.com/example/emb-model-provider"

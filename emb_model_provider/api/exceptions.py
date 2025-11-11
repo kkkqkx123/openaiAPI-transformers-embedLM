@@ -1,6 +1,8 @@
+from typing import Optional
+
 class EmbeddingAPIError(Exception):
     """嵌入API的基础异常类"""
-    def __init__(self, message: str, error_type: str, param: str = None, code: str = None):
+    def __init__(self, message: str, error_type: str, param: Optional[str] = None, code: Optional[str] = None):
         self.message = message
         self.type = error_type
         self.param = param
@@ -31,6 +33,7 @@ class BatchSizeExceededError(EmbeddingAPIError):
 class ModelNotFoundError(EmbeddingAPIError):
     """模型未找到的异常"""
     def __init__(self, model_name: str):
+        self.model_name = model_name
         super().__init__(
             message=f"Model '{model_name}' not found.",
             error_type="model_not_found",
@@ -40,7 +43,7 @@ class ModelNotFoundError(EmbeddingAPIError):
 
 class InvalidRequestError(EmbeddingAPIError):
     """无效请求的异常"""
-    def __init__(self, message: str, param: str = None):
+    def __init__(self, message: str, param: Optional[str] = None):
         super().__init__(
             message=message,
             error_type="invalid_request_error",

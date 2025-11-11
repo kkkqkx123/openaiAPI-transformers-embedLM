@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -243,6 +243,7 @@ dependencies = [
     { name = "apscheduler" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "mypy" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.11'" },
     { name = "psutil" },
@@ -261,7 +262,6 @@ dev = [
     { name = "black" },
     { name = "flake8" },
     { name = "isort" },
-    { name = "mypy" },
 ]
 
 [package.metadata]
@@ -273,7 +273,7 @@ requires-dist = [
     { name = "flake8", marker = "extra == 'dev'" },
     { name = "httpx" },
     { name = "isort", marker = "extra == 'dev'" },
-    { name = "mypy", marker = "extra == 'dev'" },
+    { name = "mypy" },
     { name = "numpy", specifier = ">=2.2.0" },
     { name = "psutil" },
     { name = "pydantic" },

@@ -23,28 +23,32 @@ class ModelsResponse(BaseModel):
 @router.get("/v1/models", response_model=ModelsResponse)
 async def list_models():
     """
-    列出可用模型的API端点
-    对应需求: UB-1.4
+    列出所有可用模型的API端点（包括别名）
     """
-    # 延迟导入，避免循环导入
     from emb_model_provider.core.config import config
-    from emb_model_provider.api.exceptions import ModelNotFoundError
     
-    # 验证模型是否存在
-    model_path = config.model_path
-    import os
-    if not os.path.exists(model_path):
-        from emb_model_provider.core.model_manager import ModelManager
-        try:
-            # 尝试初始化模型管理器，这会触发模型下载
-            model_manager = ModelManager(model_path)
-        except Exception:
-            # 如果模型不存在且无法下载，抛出异常
-            raise ModelNotFoundError(config.model_name)
+    model_info_list = []
     
-    model_info = ModelInfo(
-        id=config.model_name,
-        owned_by="organization-owner"  # 默认值，可根据需要修改
-    )
-    response = ModelsResponse(data=[model_info])
-    return response
+    # 添加主模型
+    if config.model_name:
+        model_info_list.append(ModelInfo(
+            id=config.model_name,
+            owned_by="organization-owner"
+        ))
+    
+    # 添加映射的模型和别名
+    model_mapping = config.get_model_mapping()
+    for alias, actual_model in model_mapping.items():
+        # 添加别名
+        model_info_list.append(ModelInfo(
+            id=alias,
+            owned_by="organization-owner"
+        ))
+        # 添加实际模型（如果尚未添加）
+        if actual_model != config.model_name and actual_model not in [m.id for m in model_info_list]:
+            model_info_list.append(ModelInfo(
+                id=actual_model,
+                owned_by="organization-owner"
+            ))
+    
+    return ModelsResponse(data=model_info_list)

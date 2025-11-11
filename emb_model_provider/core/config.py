@@ -8,11 +8,15 @@ to load configuration from environment variables and .env files.
 import os
 from typing import Optional, List
 from pathlib import Path
+import json
+import logging
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 class Config(BaseSettings):
@@ -45,6 +49,12 @@ class Config(BaseSettings):
     model_aliases: str = Field(
         default="",
         description="Comma-separated list of model aliases in format alias1:actual_model_name1,alias2:actual_model_name2"
+    )
+    
+    # Multi-model mapping configuration (JSON format)
+    model_mapping: str = Field(
+        default="{}",
+        description="JSON string mapping model aliases to actual model names and paths"
     )
 
     # Transformers model loading configuration
@@ -220,26 +230,59 @@ class Config(BaseSettings):
         Returns:
             Config: Configuration instance with values from environment variables
         """
-        if env_file:
-            return cls(_env_file=env_file)
         return cls()
 
     @classmethod
     def load_from_file(cls, env_file: str) -> "Config":
         """
         Load configuration from a specific .env file.
-
+        
         Args:
             env_file: Path to the .env file
-
+            
         Returns:
             Config: Configuration instance with values from the specified file
         """
         env_path = Path(env_file)
         if not env_path.exists():
             raise FileNotFoundError(f"Environment file not found: {env_file}")
-
-        return cls(_env_file=str(env_path.absolute()))
+            
+        # 从指定的.env文件加载，不修改全局环境变量
+        from dotenv import dotenv_values
+        env_vars = dotenv_values(str(env_path.absolute()))
+        
+        # 过滤掉None值并转换类型
+        filtered_env_vars = {}
+        for key, value in env_vars.items():
+            if value is not None:
+                # 移除前缀
+                if key.startswith("EMB_PROVIDER_"):
+                    config_key = key[len("EMB_PROVIDER_"):].lower()
+                    
+                    # 类型转换
+                    if config_key in ["max_batch_size", "max_context_length", "embedding_dimension",
+                                     "port", "log_file_max_size", "log_retention_days",
+                                     "log_cleanup_interval_hours", "log_max_dir_size_mb",
+                                     "log_cleanup_target_size_mb", "min_batch_size",
+                                     "max_wait_time_ms"]:
+                        try:
+                            filtered_env_vars[config_key] = int(value)
+                        except ValueError:
+                            filtered_env_vars[config_key] = value
+                    elif config_key in ["load_from_transformers", "enable_dynamic_batching",
+                                       "enable_length_grouping", "log_to_file",
+                                       "transformers_trust_remote_code"]:
+                        filtered_env_vars[config_key] = value.lower() in ['true', '1', 'yes', 'on']
+                    elif config_key in ["length_group_tolerance", "hard_timeout_additional_seconds"]:
+                        try:
+                            filtered_env_vars[config_key] = float(value)
+                        except ValueError:
+                            filtered_env_vars[config_key] = value
+                    else:
+                        filtered_env_vars[config_key] = value
+        
+        # 创建一个新的Config实例，传入环境变量
+        return cls(**filtered_env_vars)
 
     def get_model_config(self) -> dict:
         """
@@ -378,6 +421,55 @@ class Config(BaseSettings):
             return {}
 
         return aliases
+    
+    def get_model_mapping(self) -> dict:
+        """
+        Parse the model mapping JSON string into a dictionary.
+        
+        Returns:
+            dict: Dictionary mapping aliases to actual model names and paths
+        """
+        if not self.model_mapping or self.model_mapping == "{}":
+            return {}
+            
+        try:
+            return json.loads(self.model_mapping)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse model mapping JSON")
+            return {}
+    
+    def get_model_info(self, alias: str) -> dict:
+        """
+        Get model information (name and path) for a given alias.
+        
+        Args:
+            alias: Model alias
+            
+        Returns:
+            dict: Dictionary containing model name and path, or empty dict if not found
+        """
+        model_mapping = self.get_model_mapping()
+        if alias in model_mapping:
+            model_info = model_mapping[alias]
+            # If model_info is a string, it's just the model name
+            if isinstance(model_info, str):
+                return {
+                    "name": model_info,
+                    "path": self.model_path  # Use default path
+                }
+            # If model_info is a dict, it contains both name and path
+            elif isinstance(model_info, dict):
+                return {
+                    "name": model_info.get("name", alias),
+                    "path": model_info.get("path", self.model_path)
+                }
+        # If alias not found, check if it's the default model
+        elif alias == self.model_name:
+            return {
+                "name": self.model_name,
+                "path": self.model_path
+            }
+        return {}
 
 
 # Global configuration instance

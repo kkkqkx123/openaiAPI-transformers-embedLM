@@ -13,6 +13,8 @@
 #### 模型配置
 - `EMB_PROVIDER_MODEL_PATH` (默认值: `D:\models\multilingual-MiniLM-L12-v2`): 模型目录路径
 - `EMB_PROVIDER_MODEL_NAME` (默认值: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`): 要使用的模型名称 (用于从 Hugging Face Hub 下载)
+- `EMB_PROVIDER_MODEL_MAPPING` (默认值: `{}`): JSON格式的多模型映射配置，支持模型别名和路径映射
+- `EMB_PROVIDER_MODEL_ALIASES` (默认值: ``): 逗号分隔的模型别名配置 (格式: alias1:actual_model_name1,alias2:actual_model_name2)
 
 #### Transformers 模型加载配置
 - `EMB_PROVIDER_LOAD_FROM_TRANSFORMERS` (默认值: `false`): 是否直接从 transformers 加载模型（不使用本地缓存）
@@ -64,6 +66,84 @@ copy .env.example .env
 # 使用您首选的设置编辑 .env
 ```
 
+## 多模型配置
+
+该服务支持通过 `EMB_PROVIDER_MODEL_MAPPING` 配置多个模型，并为每个模型设置别名。这使得用户可以通过简短的别名来使用不同的模型。
+
+### 配置格式
+
+多模型映射使用JSON格式配置，支持两种格式：
+
+#### 简单格式（仅模型名称）
+```env
+EMB_PROVIDER_MODEL_MAPPING={"mini": "sentence-transformers/all-MiniLM-L12-v2", "multilingual": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"}
+```
+
+#### 完整格式（包含路径信息）
+```env
+EMB_PROVIDER_MODEL_MAPPING={
+  "mini": {
+    "name": "sentence-transformers/all-MiniLM-L12-v2",
+    "path": "D:\\models\\all-MiniLM-L12-v2"
+  },
+  "multilingual": {
+    "name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "path": "D:\\models\\multilingual-MiniLM-L12-v2"
+  }
+}
+```
+
+### 设置默认模型
+
+有几种方式可以设置默认模型：
+
+#### 方法一：使用"default"别名
+```env
+EMB_PROVIDER_MODEL_MAPPING={
+  "default": {
+    "name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "path": "D:\\models\\multilingual-MiniLM-L12-v2"
+  },
+  "mini": {
+    "name": "sentence-transformers/all-MiniLM-L12-v2",
+    "path": "D:\\models\\all-MiniLM-L12-v2"
+  }
+}
+```
+
+#### 方法二：使用传统的MODEL_NAME和MODEL_PATH
+```env
+EMB_PROVIDER_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+EMB_PROVIDER_MODEL_PATH=D:\models\multilingual-MiniLM-L12-v2
+```
+
+### 模型选择优先级
+
+系统按照以下优先级确定要使用的模型：
+
+1. **API请求中的模型参数**：如果请求中指定了模型，则使用指定的模型
+2. **model_mapping中的"default"别名**：如果存在"default"别名，则作为默认模型
+3. **EMB_PROVIDER_MODEL_NAME**：如果前两者都不存在，则使用这个配置的模型
+
+### 使用示例
+
+```bash
+# 使用默认模型
+curl -X POST http://localhost:9000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Hello world", "model": "default"}'
+
+# 使用别名模型
+curl -X POST http://localhost:9000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Hello world", "model": "mini"}'
+
+# 使用完整模型名
+curl -X POST http://localhost:9000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Hello world", "model": "sentence-transformers/all-MiniLM-L12-v2"}'
+```
+
 ## 模型加载机制
 
 该服务支持多种加载嵌入模型的方法：
@@ -76,6 +156,9 @@ copy .env.example .env
 
 ### 3. 直接 Transformers 加载
 如果 `EMB_PROVIDER_LOAD_FROM_TRANSFORMERS` 设置为 `true`，模型将直接从 transformers 库加载，而不使用本地缓存副本。
+
+### 4. 多模型加载
+当配置了 `EMB_PROVIDER_MODEL_MAPPING` 时，系统会根据请求中的模型参数动态选择相应的模型进行加载。
 
 ## 支持的模型
 
@@ -94,6 +177,23 @@ copy .env.example .env
 ### 创建嵌入
 
 ```bash
+# 使用默认模型
+curl -X POST http://localhost:9000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Hello, world!",
+    "model": "default"
+  }'
+
+# 使用别名模型
+curl -X POST http://localhost:9000/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Hello, world!",
+    "model": "mini"
+  }'
+
+# 使用完整模型名
 curl -X POST http://localhost:9000/v1/embeddings \
   -H "Content-Type: application/json" \
   -d '{
@@ -112,6 +212,19 @@ client = OpenAI(
     base_url="http://localhost:9000/v1"
 )
 
+# 使用默认模型
+response = client.embeddings.create(
+    model="default",
+    input="Hello, world!"
+)
+
+# 使用别名模型
+response = client.embeddings.create(
+    model="mini",
+    input="Hello, world!"
+)
+
+# 使用完整模型名
 response = client.embeddings.create(
     model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     input="Hello, world!"
@@ -121,9 +234,14 @@ response = client.embeddings.create(
 ### 请求参数
 
 - `input`: 必需。要生成嵌入的字符串或字符串数组。
-- `model`: 必需。模型名称（必须与您配置的模型匹配）。
+- `model`: 必需。模型名称、别名或"default"（必须与您配置的模型匹配）。
 - `encoding_format`: 可选。嵌入的格式（默认为 "float"）。
 - `user`: 可选。用户标识符。
+
+**模型参数说明：**
+- 可以使用完整模型名称（如 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`）
+- 可以使用配置的别名（如 `mini`、`multilingual`）
+- 可以使用 `default` 来指定默认模型
 
 ### 响应格式
 
@@ -235,6 +353,14 @@ POST http://localhost:9000/v1/performance/reset
 4. **使用适当的模型**: 选择符合您准确性和性能要求的模型。
 5. **启用动态批处理**: 对于具有可变请求模式的服务，启用动态批处理可以显著提高吞吐量。
 6. **适当配置日志**: 根据调试和合规性需求调整日志级别和保留策略。
+7. **多模型配置最佳实践**:
+   - 为最常用的模型设置 `default` 别名
+   - 使用有意义的别名（如 `mini`、`large`、`multilingual`）
+   - 在 `model_mapping` 中同时指定模型名称和路径，避免依赖单独的 `MODEL_PATH` 和 `MODEL_NAME` 配置
+   - 定期验证模型路径的有效性
+8. **默认模型设置**:
+   - 推荐使用 `model_mapping` 中的 `default` 别名作为默认模型
+   - 保持向后兼容性，保留 `MODEL_NAME` 和 `MODEL_PATH` 作为后备配置
 
 ## 故障排除
 

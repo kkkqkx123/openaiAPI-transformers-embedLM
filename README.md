@@ -7,6 +7,7 @@
 - 🚀 **高性能**: 基于 FastAPI 和 PyTorch 的高效推理
 - 🔄 **OpenAI 兼容**: 完全兼容 OpenAI embeddings API 格式
 - 📦 **自动模型管理**: 支持本地模型加载和从 Hugging Face Hub 自动下载
+- 🎯 **多模型支持**: 支持配置多个模型并通过别名访问，可设置默认模型
 - 🛡️ **错误处理**: 完善的错误处理机制，遵循 OpenAI API 错误格式
 - 📊 **结构化日志**: JSON 格式的结构化日志输出
 - ⚙️ **灵活配置**: 支持环境变量和配置文件的灵活配置
@@ -66,12 +67,20 @@ uvicorn emb_model_provider.main:app --host localhost --port 9000
 # 获取可用模型
 curl http://localhost:9000/v1/models
 
-# 创建嵌入向量
+# 创建嵌入向量（使用默认模型）
 curl -X POST "http://localhost:9000/v1/embeddings" \
   -H "Content-Type: application/json" \
   -d '{
     "input": "Hello, world!",
-    "model": "all-MiniLM-L12-v2"
+    "model": "default"
+  }'
+
+# 创建嵌入向量（使用别名模型）
+curl -X POST "http://localhost:9000/v1/embeddings" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "Hello, world!",
+    "model": "mini"
   }'
 ```
 
@@ -85,12 +94,23 @@ models_response = requests.get("http://localhost:9000/v1/models")
 models = models_response.json()
 print(models)
 
-# 创建嵌入向量
+# 创建嵌入向量（使用默认模型）
 embeddings_response = requests.post(
     "http://localhost:9000/v1/embeddings",
     json={
         "input": "Hello, world!",
-        "model": "all-MiniLM-L12-v2"
+        "model": "default"
+    }
+)
+embeddings = embeddings_response.json()
+print(embeddings)
+
+# 创建嵌入向量（使用别名模型）
+embeddings_response = requests.post(
+    "http://localhost:9000/v1/embeddings",
+    json={
+        "input": "Hello, world!",
+        "model": "mini"
     }
 )
 embeddings = embeddings_response.json()
@@ -108,9 +128,17 @@ client = OpenAI(
     base_url="http://localhost:9000/v1"
 )
 
-# 创建嵌入向量
+# 创建嵌入向量（使用默认模型）
 response = client.embeddings.create(
-    model="all-MiniLM-L12-v2",
+    model="default",
+    input="Hello, world!"
+)
+
+print(response.data[0].embedding)
+
+# 创建嵌入向量（使用别名模型）
+response = client.embeddings.create(
+    model="mini",
     input="Hello, world!"
 )
 
@@ -122,7 +150,7 @@ print(response.data[0].embedding)
 ```python
 import requests
 
-# 批量创建嵌入向量
+# 批量创建嵌入向量（使用默认模型）
 response = requests.post(
     "http://localhost:9000/v1/embeddings",
     json={
@@ -131,7 +159,24 @@ response = requests.post(
             "Second sentence",
             "Third sentence"
         ],
-        "model": "all-MiniLM-L12-v2"
+        "model": "default"
+    }
+)
+
+data = response.json()
+for i, embedding_data in enumerate(data["data"]):
+    print(f"Sentence {i}: {embedding_data['embedding'][:5]}...")  # 只显示前5个维度
+
+# 批量创建嵌入向量（使用别名模型）
+response = requests.post(
+    "http://localhost:9000/v1/embeddings",
+    json={
+        "input": [
+            "First sentence",
+            "Second sentence",
+            "Third sentence"
+        ],
+        "model": "mini"
     }
 )
 
@@ -150,6 +195,9 @@ for i, embedding_data in enumerate(data["data"]):
 # 模型配置
 export EMB_PROVIDER_MODEL_PATH="/path/to/model"
 export EMB_PROVIDER_MODEL_NAME="all-MiniLM-L12-v2"
+
+# 多模型配置
+export EMB_PROVIDER_MODEL_MAPPING='{"default": {"name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", "path": "/path/to/multilingual-model"}, "mini": {"name": "sentence-transformers/all-MiniLM-L12-v2", "path": "/path/to/mini-model"}}'
 
 # 处理配置
 export EMB_PROVIDER_MAX_BATCH_SIZE=32
@@ -174,8 +222,20 @@ export EMB_PROVIDER_LOG_LEVEL="INFO"  # DEBUG, INFO, WARNING, ERROR
 
 ```env
 # 模型配置
-EMB_PROVIDER_MODEL_PATH=D:\models\all-MiniLM-L12-v2
-EMB_PROVIDER_MODEL_NAME=all-MiniLM-L12-v2
+EMB_PROVIDER_MODEL_PATH=D:\models\multilingual-MiniLM-L12-v2
+EMB_PROVIDER_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+# 多模型配置
+EMB_PROVIDER_MODEL_MAPPING={
+  "default": {
+    "name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "path": "D:\\models\\multilingual-MiniLM-L12-v2"
+  },
+  "mini": {
+    "name": "sentence-transformers/all-MiniLM-L12-v2",
+    "path": "D:\\models\\all-MiniLM-L12-v2"
+  }
+}
 
 # 处理配置
 EMB_PROVIDER_MAX_BATCH_SIZE=32
@@ -208,7 +268,25 @@ EMB_PROVIDER_LOG_LEVEL=INFO
   "object": "list",
   "data": [
     {
-      "id": "all-MiniLM-L12-v2",
+      "id": "default",
+      "object": "model",
+      "created": 1677610602,
+      "owned_by": "organization-owner"
+    },
+    {
+      "id": "mini",
+      "object": "model",
+      "created": 1677610602,
+      "owned_by": "organization-owner"
+    },
+    {
+      "id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "object": "model",
+      "created": 1677610602,
+      "owned_by": "organization-owner"
+    },
+    {
+      "id": "sentence-transformers/all-MiniLM-L12-v2",
       "object": "model",
       "created": 1677610602,
       "owned_by": "organization-owner"
@@ -225,7 +303,7 @@ EMB_PROVIDER_LOG_LEVEL=INFO
 ```json
 {
   "input": "Your text here",
-  "model": "all-MiniLM-L12-v2",
+  "model": "default",
   "encoding_format": "float",
   "user": "optional-user-id"
 }
@@ -242,13 +320,18 @@ EMB_PROVIDER_LOG_LEVEL=INFO
       "index": 0
     }
   ],
-  "model": "all-MiniLM-L12-v2",
+  "model": "default",
   "usage": {
     "prompt_tokens": 5,
     "total_tokens": 5
   }
 }
 ```
+
+**模型参数说明：**
+- 可以使用完整模型名称（如 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`）
+- 可以使用配置的别名（如 `default`、`mini`）
+- 使用 `default` 来指定默认模型
 
 #### `GET /health`
 
@@ -292,10 +375,13 @@ API 遵循 OpenAI 的错误响应格式：
 ```python
 # 不推荐：多个单独请求
 for text in texts:
-    response = requests.post("/v1/embeddings", json={"input": text, "model": "all-MiniLM-L12-v2"})
+    response = requests.post("/v1/embeddings", json={"input": text, "model": "default"})
 
 # 推荐：单个批量请求
-response = requests.post("/v1/embeddings", json={"input": texts, "model": "all-MiniLM-L12-v2"})
+response = requests.post("/v1/embeddings", json={"input": texts, "model": "default"})
+
+# 使用别名模型进行批量处理
+response = requests.post("/v1/embeddings", json={"input": texts, "model": "mini"})
 ```
 
 ### 配置调优

@@ -49,10 +49,6 @@ class EmbeddingService:
         """
         验证请求参数
         """
-        # 检查模型名称是否匹配
-        if request.model != self.config.model_name:
-            raise ModelNotFoundError(model_name=request.model)
-        
         # 检查输入是否为空
         if not request.input:
             raise EmbeddingAPIError(
@@ -60,6 +56,12 @@ class EmbeddingService:
                 error_type="invalid_request_error",
                 param="input"
             )
+        
+        # 验证模型存在
+        model_info = self.config.get_model_info(request.model)
+        if not model_info:
+            # 如果没有找到，则不支持该模型
+            raise ModelNotFoundError(model_name=request.model)
         
         # 将输入转换为列表进行统一处理
         inputs = request.input if isinstance(request.input, list) else [request.input]
@@ -107,11 +109,12 @@ class EmbeddingService:
             # 4. 创建EmbeddingData对象列表
             embedding_data_list = []
             for i, embedding in enumerate(sorted_embeddings):
-                embedding_data = EmbeddingData(
-                    embedding=embedding,
-                    index=i
-                )
-                embedding_data_list.append(embedding_data)
+                if embedding is not None:
+                    embedding_data = EmbeddingData(
+                        embedding=embedding,
+                        index=i
+                    )
+                    embedding_data_list.append(embedding_data)
             
             return embedding_data_list
     
@@ -135,6 +138,8 @@ class EmbeddingService:
         
         # 生成嵌入
         with torch.no_grad():
+            if self.model is None:
+                raise RuntimeError("Model not initialized")
             model_output = self.model(**encoded_inputs)
             # 使用mean pooling获取句子嵌入
             embeddings = self._mean_pooling(model_output, encoded_inputs['attention_mask'])
