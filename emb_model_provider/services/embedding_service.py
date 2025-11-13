@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import List, Union
 from transformers import AutoTokenizer, AutoModel
 import torch

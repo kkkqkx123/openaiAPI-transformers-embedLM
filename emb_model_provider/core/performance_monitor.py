@@ -51,13 +51,13 @@ class PerformanceMetrics:
         """获取95分位延迟"""
         if not self.processing_times:
             return 0.0
-        return np.percentile(self.processing_times, 95)
+        return float(np.percentile(self.processing_times, 95))
     
     def get_p99_latency(self) -> float:
         """获取99分位延迟"""
         if not self.processing_times:
             return 0.0
-        return np.percentile(self.processing_times, 99)
+        return float(np.percentile(self.processing_times, 99))
     
     def get_avg_padding_ratio(self) -> float:
         """获取平均填充比例"""

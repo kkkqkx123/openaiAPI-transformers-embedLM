@@ -111,7 +111,7 @@ class LengthBasedBatchOptimizer:
         return BatchGroup(
             texts=texts,
             indices=indices,
-            avg_length=np.mean(lengths),
+            avg_length=float(np.mean(lengths)),
             max_length=max(lengths),
             size=len(texts)
         )
@@ -121,7 +121,7 @@ class LengthBasedBatchOptimizer:
         if not texts:
             return 0.0
         lengths = [len(self.tokenizer.encode(text, add_special_tokens=False)) for text in texts]
-        return np.mean(lengths)
+        return float(np.mean(lengths))
     
     def _get_max_length(self, texts: List[str]) -> int:
         """获取最大长度"""

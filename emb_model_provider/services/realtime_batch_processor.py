@@ -213,6 +213,7 @@ class RealtimeBatchProcessor:
                 
                 if current_size > 0:
                     # Check oldest request timestamp
+                    should_process = False
                     with self._lock:
                         if self._requests:
                             oldest_timestamp = min(req.timestamp for req in self._requests)

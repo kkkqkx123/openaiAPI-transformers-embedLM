@@ -76,9 +76,14 @@ async def shutdown_event():
     """
     应用关闭时的清理工作
     """
-    from emb_model_provider.api.embeddings import realtime_batch_processor
-    if realtime_batch_processor:
-        await realtime_batch_processor.stop()
+    from emb_model_provider.api.embeddings import get_realtime_batch_processor
+    try:
+        batch_processor = get_realtime_batch_processor()
+        if batch_processor:
+            await batch_processor.stop()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error during shutdown: {e}")
 
 
 def run_server():

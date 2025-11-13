@@ -12,7 +12,7 @@ import logging
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from logging.handlers import RotatingFileHandler
@@ -33,7 +33,7 @@ class CompressingRotatingFileHandler(RotatingFileHandler):
         """
         if self.stream:
             self.stream.close()
-            self.stream = None
+            self.stream = None  # type: ignore[assignment]
         
         # Determine the base filename
         base_name = self.baseFilename
