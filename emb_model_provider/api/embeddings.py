@@ -1,4 +1,4 @@
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Any
 from pydantic import BaseModel
 from fastapi import APIRouter
 from emb_model_provider.core.performance_monitor import performance_monitor
@@ -40,7 +40,7 @@ _embedding_service_instance = None
 _realtime_batch_processor = None  # Global instance of the batch processor
 
 # 延迟导入服务，避免循环导入
-def get_embedding_service():
+def get_embedding_service() -> Any:
     global _embedding_service_instance, _realtime_batch_processor
     if _embedding_service_instance is None:
         from emb_model_provider.services.embedding_service import EmbeddingService
@@ -58,7 +58,7 @@ def get_embedding_service():
     return _embedding_service_instance
 
 
-def get_realtime_batch_processor():
+def get_realtime_batch_processor() -> Any:
     """Get the instance of the real-time batch processor"""
     global _realtime_batch_processor
     if _realtime_batch_processor is None:
@@ -67,7 +67,7 @@ def get_realtime_batch_processor():
 
 
 @router.post("/v1/embeddings", response_model=EmbeddingResponse)
-async def create_embeddings(request: EmbeddingRequest):
+async def create_embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
     """
     创建嵌入向量的API端点
     对应需求: UB-1.1, UB-1.2, UB-1.3
@@ -101,7 +101,7 @@ async def create_embeddings(request: EmbeddingRequest):
 
 
 @router.get("/v1/performance")
-async def get_performance_metrics():
+async def get_performance_metrics() -> Any:
     """
     获取性能监控指标
     """
@@ -109,7 +109,7 @@ async def get_performance_metrics():
 
 
 @router.post("/v1/performance/reset")
-async def reset_performance_metrics():
+async def reset_performance_metrics() -> Any:
     """
     重置性能监控指标
     """

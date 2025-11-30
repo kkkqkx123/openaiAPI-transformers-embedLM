@@ -10,7 +10,7 @@ import sys
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -74,7 +74,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     to the request state for use in logging.
     """
     
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Any) -> Response:  # type: ignore
         """
         Process the request and add request ID tracking.
         
@@ -117,7 +117,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         # Add request ID to response headers
         response.headers["X-Request-ID"] = request_id
         
-        return response
+        return cast(Response, response)
 
 
 def setup_logging() -> None:
@@ -153,9 +153,9 @@ def setup_logging() -> None:
         
         # Add file handlers to root logger for each level
         for level_name in ['DEBUG', 'INFO', 'WARNING', 'ERROR']:
-            handler = log_manager.get_handler(level_name)
-            if handler:
-                root_logger.addHandler(handler)
+            file_handler: Optional[logging.Handler] = log_manager.get_handler(level_name)
+            if file_handler:
+                root_logger.addHandler(file_handler)
     
     # Configure specific loggers
     logging.getLogger("emb_model_provider").setLevel(log_level)
@@ -188,7 +188,7 @@ def log_with_request_id(
     level: int,
     message: str,
     request_id: Optional[str] = None,
-    **kwargs
+    **kwargs: Any
 ) -> None:
     """
     Log a message with optional request ID.

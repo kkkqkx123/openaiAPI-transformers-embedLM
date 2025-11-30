@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Union
+from typing import List, Union, Any, Optional
 from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
@@ -24,7 +24,7 @@ class EmbeddingService:
     
     def __init__(self, config: Config):
         self.config = config
-        self.model_manager = ModelManager(config.model_path)
+        self.model_manager = ModelManager()  # 使用默认loader，让ModelManager自己创建
         self.model_manager.load_model()  # 显式加载模型
         self.model = self.model_manager.model
         # 确保模型在正确的设备上
@@ -43,7 +43,7 @@ class EmbeddingService:
         # 启动性能监控
         performance_monitor.start_monitoring()
     
-    def get_tokenizer(self):
+    def get_tokenizer(self) -> Any:
         """获取线程安全的tokenizer实例"""
         return self.tokenizer_manager.get_tokenizer()
         
@@ -104,12 +104,12 @@ class EmbeddingService:
                 original_indices.extend(group.indices)
             
             # 3. 恢复原始顺序
-            sorted_embeddings = [None] * len(all_embeddings)
+            sorted_embeddings: List[Optional[List[float]]] = [None] * len(all_embeddings)
             for i, original_idx in enumerate(original_indices):
                 sorted_embeddings[original_idx] = all_embeddings[i]
             
             # 4. 创建EmbeddingData对象列表
-            embedding_data_list = []
+            embedding_data_list: List[EmbeddingData] = []
             for i, embedding in enumerate(sorted_embeddings):
                 if embedding is not None:
                     embedding_data = EmbeddingData(
@@ -153,7 +153,7 @@ class EmbeddingService:
         
         return embeddings_list
     
-    def _mean_pooling(self, model_output, attention_mask):
+    def _mean_pooling(self, model_output: Any, attention_mask: Any) -> Any:
         """
         使用attention mask进行平均池化
         """

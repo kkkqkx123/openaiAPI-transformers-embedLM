@@ -6,7 +6,7 @@ to load configuration from environment variables and .env files.
 """
 
 import os
-from typing import Optional, List
+from typing import Optional, List, Dict, Union
 from pathlib import Path
 import json
 import logging
@@ -73,6 +73,38 @@ class Config(BaseSettings):
     transformers_trust_remote_code: bool = Field(
         default=False,
         description="Whether to trust remote code when loading from transformers"
+    )
+
+    # ModelScope model loading configuration
+    modelscope_model_name: str = Field(
+        default="",
+        description="ModelScope model name to load (used when modelscope_enabled=True)"
+    )
+    modelscope_cache_dir: Optional[str] = Field(
+        default=None,
+        description="Custom cache directory for ModelScope models (None uses default cache)"
+    )
+    modelscope_trust_remote_code: bool = Field(
+        default=False,
+        description="Whether to trust remote code when loading from ModelScope"
+    )
+    modelscope_revision: str = Field(
+        default="master",
+        description="Model revision to load from ModelScope"
+    )
+    modelscope_model_provider: str = Field(
+        default="modelscope",
+        description="Model provider to use: 'huggingface' or 'modelscope'"
+    )
+    modelscope_fallback_to_huggingface: bool = Field(
+        default=True,
+        description="Whether to fallback to Hugging Face if ModelScope fails"
+    )
+    
+    # Model source configuration (simplified alias for model provider)
+    model_source: str = Field(
+        default="huggingface",
+        description="Model source to use: 'huggingface' or 'modelscope' (alias for modelscope_model_provider)"
     )
 
     # Processing configuration
@@ -142,6 +174,37 @@ class Config(BaseSettings):
     device: str = Field(
         default="auto",
         description="Device to run the model on (auto, cpu, cuda)"
+    )
+
+    # Precision configuration
+    model_precision: str = Field(
+        default="auto",
+        pattern="^(auto|fp32|fp16|bf16|int8|int4)$",
+        description="Model precision to use: auto, fp32, fp16, bf16, int8, int4"
+    )
+    
+    # Model-specific precision overrides (JSON format)
+    model_precision_overrides: str = Field(
+        default="{}",
+        description="JSON string mapping model names to precision settings"
+    )
+    
+    # Quantization configuration
+    enable_quantization: bool = Field(
+        default=False,
+        description="Enable quantization support (int8/int4)"
+    )
+    
+    quantization_method: str = Field(
+        default="bitsandbytes",
+        pattern="^(bitsandbytes|gptq|awq)$",
+        description="Quantization method to use: bitsandbytes, gptq, awq"
+    )
+    
+    # GPU memory optimization
+    enable_gpu_memory_optimization: bool = Field(
+        default=True,
+        description="Enable GPU memory optimization techniques"
     )
 
     # API configuration
@@ -219,6 +282,57 @@ class Config(BaseSettings):
         except (ValueError, AttributeError):
             return [7, 3, 1]  # Default fallback
 
+    def get_model_precision_overrides(self) -> Dict[str, str]:
+        """
+        Parse the model precision overrides from JSON string.
+
+        Returns:
+            Dict[str, str]: Mapping of model names to precision settings
+        """
+        try:
+            return json.loads(self.model_precision_overrides)
+        except (json.JSONDecodeError, AttributeError):
+            return {}
+
+    def get_precision_for_model(self, model_name: str) -> str:
+        """
+        Get the precision setting for a specific model.
+        
+        Args:
+            model_name: The name of the model
+            
+        Returns:
+            str: Precision setting for the model (auto, fp32, fp16, bf16, int8, int4)
+        """
+        overrides = self.get_model_precision_overrides()
+        
+        # Check for exact model name match
+        if model_name in overrides:
+            return overrides[model_name]
+        
+        # Check for partial matches (model name contains key)
+        for override_model, precision in overrides.items():
+            if override_model in model_name:
+                return precision
+        
+        # Return global precision setting
+        return self.model_precision
+
+    def get_precision_config(self) -> dict:
+        """
+        Get precision-related configuration.
+
+        Returns:
+            dict: Precision configuration parameters
+        """
+        return {
+            "model_precision": self.model_precision,
+            "model_precision_overrides": self.get_model_precision_overrides(),
+            "enable_quantization": self.enable_quantization,
+            "quantization_method": self.quantization_method,
+            "enable_gpu_memory_optimization": self.enable_gpu_memory_optimization,
+        }
+
     @classmethod
     def from_env(cls, env_file: Optional[str] = None) -> "Config":
         """
@@ -252,7 +366,7 @@ class Config(BaseSettings):
         env_vars = dotenv_values(str(env_path.absolute()))
         
         # 过滤掉None值并转换类型
-        filtered_env_vars = {}
+        filtered_env_vars: Dict[str, Union[str, int, float, bool]] = {}
         for key, value in env_vars.items():
             if value is not None:
                 # 移除前缀
@@ -268,21 +382,26 @@ class Config(BaseSettings):
                         try:
                             filtered_env_vars[config_key] = int(value)
                         except ValueError:
-                            filtered_env_vars[config_key] = value
+                            # Skip invalid integer values
+                            continue
                     elif config_key in ["load_from_transformers", "enable_dynamic_batching",
                                        "enable_length_grouping", "log_to_file",
-                                       "transformers_trust_remote_code"]:
+                                       "transformers_trust_remote_code",
+                                       "modelscope_trust_remote_code",
+                                       "modelscope_fallback_to_huggingface"]:
                         filtered_env_vars[config_key] = value.lower() in ['true', '1', 'yes', 'on']
                     elif config_key in ["length_group_tolerance", "hard_timeout_additional_seconds"]:
                         try:
                             filtered_env_vars[config_key] = float(value)
                         except ValueError:
-                            filtered_env_vars[config_key] = value
+                            # Skip invalid float values
+                            continue
                     else:
                         filtered_env_vars[config_key] = value
         
         # 创建一个新的Config实例，传入环境变量
-        return cls(**filtered_env_vars)
+        # Use type ignore because Pydantic will validate the types at runtime
+        return cls(**filtered_env_vars)  # type: ignore
 
     def get_model_config(self) -> dict:
         """
@@ -301,6 +420,12 @@ class Config(BaseSettings):
             "transformers_model_name": self.transformers_model_name,
             "transformers_cache_dir": self.transformers_cache_dir,
             "transformers_trust_remote_code": self.transformers_trust_remote_code,
+            "modelscope_model_name": self.modelscope_model_name,
+            "modelscope_cache_dir": self.modelscope_cache_dir,
+            "modelscope_trust_remote_code": self.modelscope_trust_remote_code,
+            "modelscope_revision": self.modelscope_revision,
+            "modelscope_model_provider": self.modelscope_model_provider,
+            "modelscope_fallback_to_huggingface": self.modelscope_fallback_to_huggingface,
         }
 
     def get_api_config(self) -> dict:
@@ -433,7 +558,12 @@ class Config(BaseSettings):
             return {}
             
         try:
-            return json.loads(self.model_mapping)
+            result = json.loads(self.model_mapping)
+            if isinstance(result, dict):
+                return result
+            else:
+                logger.warning("Model mapping JSON is not a dictionary")
+                return {}
         except json.JSONDecodeError:
             logger.warning("Failed to parse model mapping JSON")
             return {}

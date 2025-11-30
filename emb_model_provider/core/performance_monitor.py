@@ -8,7 +8,7 @@ of batch processing operations.
 import time
 import threading
 from contextlib import contextmanager
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 import numpy as np
 import torch
@@ -69,13 +69,13 @@ class PerformanceMetrics:
 class PerformanceMonitor:
     """性能监控器"""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.metrics = PerformanceMetrics()
         self._lock = threading.Lock()
-        self._start_time = None
+        self._start_time: Optional[float] = None
         
     @contextmanager
-    def monitor_request(self, batch_size: int, input_texts: List[str]):
+    def monitor_request(self, batch_size: int, input_texts: List[str]) -> Any:
         """
         监控单个请求的性能
         
@@ -154,7 +154,7 @@ class PerformanceMonitor:
         self._start_time = time.time()
         logger.info("Performance monitoring started")
     
-    def stop_monitoring(self) -> Dict:
+    def stop_monitoring(self) -> Dict[str, Any]:
         """停止监控并返回最终报告"""
         if self._start_time:
             total_time = time.time() - self._start_time

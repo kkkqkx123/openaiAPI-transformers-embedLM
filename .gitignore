@@ -2,7 +2,6 @@
 **/*.pyc
 **/__pycache__
 **/*.egg-info
-.env
 **/repomix-output.xml
 logs
 **/*.log

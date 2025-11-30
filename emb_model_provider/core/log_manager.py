@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.background import BackgroundScheduler  # type: ignore
 from logging.handlers import RotatingFileHandler
 
 from .config import config
@@ -67,7 +67,7 @@ class LogManager:
     as well as periodic cleanup of old log files based on configured policies.
     """
     
-    def __init__(self, config_override=None):
+    def __init__(self, config_override: Optional[Any] = None) -> None:
         """Initialize the log manager.
         
         Args:

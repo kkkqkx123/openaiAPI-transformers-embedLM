@@ -8,7 +8,7 @@ solving the "Already borrowed" error that occurs with fast tokenizers in concurr
 import os
 import threading
 import copy
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast, Generator
 from contextlib import contextmanager
 import torch
 from transformers import AutoTokenizer, PreTrainedTokenizer
@@ -53,7 +53,7 @@ class ThreadSafeTokenizerManager:
         # tokenizer池
         self._tokenizer_pool: Dict[int, PreTrainedTokenizer] = {}
         self._pool_lock = threading.Lock()
-        self._pool_available = set()
+        self._available_thread_ids: set[int] = set()
         
         # 加载主tokenizer
         self._load_master_tokenizer()
@@ -86,16 +86,17 @@ class ThreadSafeTokenizerManager:
         
         try:
             # 创建tokenizer的深拷贝
-            tokenizer_copy = copy.deepcopy(self._master_tokenizer)
+            tokenizer_copy: PreTrainedTokenizer = copy.deepcopy(self._master_tokenizer)
             return tokenizer_copy
         except Exception as e:
             logger.error(f"Failed to create tokenizer copy: {e}")
             # 如果深拷贝失败，尝试重新加载
-            return AutoTokenizer.from_pretrained(
+            tokenizer: PreTrainedTokenizer = cast(PreTrainedTokenizer, AutoTokenizer.from_pretrained(
                 self.model_path,
                 local_files_only=True,
                 use_fast=True
-            )
+            ))
+            return tokenizer
     
     def get_tokenizer(self) -> PreTrainedTokenizer:
         """
@@ -115,11 +116,11 @@ class ThreadSafeTokenizerManager:
             self._thread_local.tokenizer = self._create_tokenizer_copy()
             logger.debug(f"Created thread-local tokenizer for thread {threading.get_ident()}")
         
-        return self._thread_local.tokenizer
+        return cast(PreTrainedTokenizer, self._thread_local.tokenizer)
     
     def _get_pooled_tokenizer(self) -> PreTrainedTokenizer:
         """从池中获取tokenizer实例"""
-        thread_id = threading.get_ident()
+        thread_id: int = threading.get_ident()
         
         with self._pool_lock:
             # 检查当前线程是否已经有分配的tokenizer
@@ -127,9 +128,9 @@ class ThreadSafeTokenizerManager:
                 return self._tokenizer_pool[thread_id]
             
             # 尝试从可用池中获取
-            if self._pool_available:
-                pool_id = self._pool_available.pop()
-                tokenizer = self._tokenizer_pool[pool_id]
+            if self._available_thread_ids:
+                pool_id: int = self._available_thread_ids.pop()
+                tokenizer: PreTrainedTokenizer = self._tokenizer_pool[pool_id]
                 del self._tokenizer_pool[pool_id]
                 self._tokenizer_pool[thread_id] = tokenizer
                 logger.debug(f"Assigned pooled tokenizer to thread {thread_id}")
@@ -140,25 +141,25 @@ class ThreadSafeTokenizerManager:
                 logger.warning(f"Tokenizer pool exhausted, creating new tokenizer for thread {thread_id}")
             
             # 创建新的tokenizer
-            tokenizer = self._create_tokenizer_copy()
-            self._tokenizer_pool[thread_id] = tokenizer
+            new_tokenizer: PreTrainedTokenizer = self._create_tokenizer_copy()
+            self._tokenizer_pool[thread_id] = new_tokenizer
             logger.debug(f"Created new tokenizer for thread {thread_id}")
             
-            return tokenizer
+            return new_tokenizer
     
     def release_tokenizer(self) -> None:
         """释放当前线程的tokenizer回池中"""
         if not self.use_thread_local:
-            thread_id = threading.get_ident()
+            thread_id: int = threading.get_ident()
             
             with self._pool_lock:
                 if thread_id in self._tokenizer_pool:
                     # 将tokenizer移回可用池
-                    self._pool_available.add(thread_id)
+                    self._available_thread_ids.add(thread_id)
                     logger.debug(f"Released tokenizer for thread {thread_id}")
     
     @contextmanager
-    def get_tokenizer_context(self):
+    def get_tokenizer_context(self) -> Generator[PreTrainedTokenizer, None, None]:
         """
         获取tokenizer的上下文管理器
         
@@ -189,11 +190,11 @@ class ThreadSafeTokenizerManager:
         
         if self.use_thread_local:
             # 统计线程本地tokenizer数量（困难，只能估算）
-            info["active_threads"] = threading.active_count()
+            info["active_threads"] = cast(Any, threading.active_count())
         else:
             with self._pool_lock:
-                info["pool_size"] = len(self._tokenizer_pool)
-                info["available_tokenizers"] = len(self._pool_available)
+                info["pool_size"] = cast(Any, len(self._tokenizer_pool))
+                info["available_tokenizers"] = cast(Any, len(self._available_thread_ids))
         
         return info
     
@@ -207,7 +208,7 @@ class ThreadSafeTokenizerManager:
             # 清理tokenizer池
             with self._pool_lock:
                 self._tokenizer_pool.clear()
-                self._pool_available.clear()
+                self._available_thread_ids.clear()
         
         # 清理主tokenizer
         self._master_tokenizer = None
@@ -222,7 +223,7 @@ class GlobalTokenizerManager:
     _lock = threading.Lock()
     
     @classmethod
-    def initialize(cls, model_path: str, **kwargs) -> ThreadSafeTokenizerManager:
+    def initialize(cls, model_path: str, **kwargs: Any) -> ThreadSafeTokenizerManager:
         """
         初始化全局tokenizer管理器
         
@@ -270,6 +271,6 @@ def get_tokenizer_manager() -> ThreadSafeTokenizerManager:
     return GlobalTokenizerManager.get_instance()
 
 
-def initialize_tokenizer_manager(model_path: str, **kwargs) -> ThreadSafeTokenizerManager:
+def initialize_tokenizer_manager(model_path: str, **kwargs: Any) -> ThreadSafeTokenizerManager:
     """初始化全局tokenizer管理器"""
     return GlobalTokenizerManager.initialize(model_path, **kwargs)

@@ -7,7 +7,7 @@ to avoid long hangs when processing small batches.
 
 import asyncio
 import time
-from typing import List
+from typing import List, Optional, Any
 from dataclasses import dataclass
 from threading import Lock
 from emb_model_provider.core.logging import get_logger
@@ -36,7 +36,7 @@ class RealtimeBatchProcessor:
     The implementation uses event-driven scheduling to optimize performance.
     """
     
-    def __init__(self, config: Config, embedding_service):
+    def __init__(self, config: Config, embedding_service: Any) -> None:
         self.config = config
         self.embedding_service = embedding_service
         self.max_batch_size = config.max_batch_size
@@ -53,7 +53,7 @@ class RealtimeBatchProcessor:
         self._requests_available_event = asyncio.Event()
         
         # Background task for processing
-        self._background_task = None
+        self._background_task: Optional[asyncio.Task[None]] = None
         
         logger.info(
             f"RealtimeBatchProcessor initialized: "
@@ -73,7 +73,7 @@ class RealtimeBatchProcessor:
         Returns:
             List of embedding results
         """
-        future = asyncio.Future()
+        future: asyncio.Future[List[EmbeddingData]] = asyncio.Future()
         
         # Create a batch request
         batch_request = BatchRequest(
@@ -123,7 +123,7 @@ class RealtimeBatchProcessor:
         
         return False
     
-    async def _process_batch(self):
+    async def _process_batch(self) -> None:
         """
         Process the current batch of requests.
         """
@@ -148,7 +148,7 @@ class RealtimeBatchProcessor:
         
         try:
             # Process all inputs together using the embedding service
-            embedding_data_list = self.embedding_service.generate_embeddings(all_inputs)
+            embedding_data_list: List[EmbeddingData] = self.embedding_service.generate_embeddings(all_inputs)
             
             # Distribute results back to individual requests
             idx = 0
@@ -169,7 +169,7 @@ class RealtimeBatchProcessor:
             for batch_req in requests_to_process:
                 batch_req.future.set_exception(e)
     
-    async def _process_loop(self):
+    async def _process_loop(self) -> None:
         """
         Background processing loop that handles timeout-based batch processing.
         Uses event-driven approach to optimize performance.
@@ -238,12 +238,12 @@ class RealtimeBatchProcessor:
                 logger.error(f"Error in batch processing loop: {e}")
                 await asyncio.sleep(0.1)  # Longer sleep on error
     
-    async def start(self):
+    async def start(self) -> None:
         """Start the background processing loop."""
         self._background_task = asyncio.create_task(self._process_loop())
         logger.info("RealtimeBatchProcessor started")
     
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the background processing loop."""
         if self._background_task:
             self._stop_event.set()

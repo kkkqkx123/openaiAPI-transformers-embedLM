@@ -58,3 +58,13 @@ class InternalServerError(EmbeddingAPIError):
             message=message,
             error_type="internal_server_error"
         )
+
+
+class ModelLoadError(EmbeddingAPIError):
+    """模型加载错误"""
+    def __init__(self, message: str, model_name: Optional[str] = None):
+        super().__init__(
+            message=message,
+            error_type="model_load_error",
+            param=model_name
+        )

@@ -394,6 +394,7 @@ class TestModelManager:
         """Test getting model info when model is not loaded."""
         mock_config.model_path = self.model_path
         mock_config.model_name = self.model_name
+        mock_config.load_from_transformers = False  # Explicitly set this
         
         manager = ModelManager()
         
@@ -410,6 +411,7 @@ class TestModelManager:
         mock_config.model_name = self.model_name
         mock_config.max_context_length = 512
         mock_config.embedding_dimension = 384
+        mock_config.load_from_transformers = False  # Explicitly set this
         
         manager = ModelManager()
         manager._model_loaded = True

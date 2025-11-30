@@ -1,342 +1,169 @@
-"""
-Model manager module for embedding model provider.
-
-This module provides functionality to load and manage embedding models,
-including local loading and downloading from Hugging Face Hub.
-"""
-
+from typing import Dict, List, Optional, Any, Union, Tuple, cast
 import pickle
-from pathlib import Path
-from typing import List, Optional, Union
-
 import torch
-from huggingface_hub import hf_hub_download, snapshot_download
-from transformers import AutoModel, AutoTokenizer, PreTrainedModel, PreTrainedTokenizer
 from tqdm import tqdm
 
-from .config import config
+# Local imports
+from .config import Config
 from .logging import get_logger, log_model_event
+from ..loaders import BaseModelLoader, HuggingFaceModelLoader, ModelScopeModelLoader
 
+# Get config instance
+config = Config()
+
+# Get logger
 logger = get_logger(__name__)
 
 
 class ModelManager:
     """
-    Manager for loading and managing embedding models.
-    
-    This class handles loading models from local paths or downloading
-    them from Hugging Face Hub, and provides methods for batch inference.
+    Model manager that uses loader pattern to handle different model sources.
+    Delegates model loading to appropriate loaders while handling embedding generation.
     """
     
-    def __init__(self, model_path: Optional[str] = None, model_name: Optional[str] = None):
+    def __init__(self, loader: Optional[BaseModelLoader] = None):
         """
         Initialize the model manager.
         
         Args:
-            model_path: Path to the model directory (overrides config)
-            model_name: Name of the model (overrides config)
+            loader: Optional loader instance. If not provided, will create based on config.
         """
-        self.model_path = model_path or config.model_path
-        self.model_name = model_name or config.model_name
-        self.device = self._get_device()
+        self.model_name = config.model_name
+        self.model_path = config.model_path
+        self.device = config.device
+        self.max_batch_size = config.max_batch_size
+        self.max_context_length = config.max_context_length
+        self.embedding_dimension = config.embedding_dimension
         
-        # Transformers configuration
+        # Transformers-specific configuration
         self.load_from_transformers = config.load_from_transformers
         self.transformers_model_name = config.transformers_model_name
         self.transformers_cache_dir = config.transformers_cache_dir
         self.transformers_trust_remote_code = config.transformers_trust_remote_code
         
-        self._model = None
-        self._tokenizer = None
+        # Model source configuration
+        self.model_source = config.model_source
+        
+        # Model and tokenizer references
+        self._model: Optional[Any] = None
+        self._tokenizer: Optional[Any] = None
         self._model_loaded = False
+        self._loader: Optional[BaseModelLoader] = loader
         
+        logger.info(f"ModelManager initialized with model_source={self.model_source}, device={self.device}")
+    
+    def _create_loader(self) -> BaseModelLoader:
+        """
+        Create appropriate loader based on configuration.
+        
+        Returns:
+            BaseModelLoader: Configured loader instance
+        """
         if self.load_from_transformers:
-            logger.info(f"Initializing ModelManager for {self.transformers_model_name} (from transformers)")
-        else:
-            logger.info(f"Initializing ModelManager for {self.model_name}")
-    
-    def _get_device(self) -> str:
-        """
-        Determine the device to use for model inference.
+            logger.info("Creating HuggingFaceModelLoader for transformers loading")
+            return HuggingFaceModelLoader(
+                model_name=self.transformers_model_name,
+                model_path=None,
+                device=self.device,
+                cache_dir=self.transformers_cache_dir,
+                trust_remote_code=self.transformers_trust_remote_code
+            )
         
-        Returns:
-            str: Device name ('cuda', 'cpu', or 'mps')
-        """
-        if config.device == "auto":
-            if torch.cuda.is_available():
-                return "cuda"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                return "mps"
-            else:
-                return "cpu"
-        else:
-            return config.device
-    
-    def _is_model_available_locally(self) -> bool:
-        """
-        Check if the model is available locally.
+        if self.model_source == "modelscope":
+            logger.info("Creating ModelScopeModelLoader for ModelScope")
+            return ModelScopeModelLoader(
+                model_name=self.model_name,
+                model_path=self.model_path,
+                device=self.device
+            )
         
-        Returns:
-            bool: True if model is available locally, False otherwise
-        """
-        model_path = Path(self.model_path)
-        
-        # Check for model files
-        required_files = [
-            "config.json",
-            "pytorch_model.bin",
-            "tokenizer.json",
-            "tokenizer_config.json"
-        ]
-        
-        # Check for alternative model file names
-        alternative_files = [
-            "model.safetensors",
-            "tokenizer.json"
-        ]
-        
-        # Check if required files exist
-        has_required = all((model_path / file).exists() for file in required_files)
-        
-        # Check for alternative files
-        has_alternative = (
-            (model_path / "config.json").exists() and
-            ((model_path / "pytorch_model.bin").exists() or (model_path / "model.safetensors").exists()) and
-            (model_path / "tokenizer.json").exists()
+        # Default to Hugging Face
+        logger.info("Creating HuggingFaceModelLoader as default")
+        return HuggingFaceModelLoader(
+            model_name=self.model_name,
+            model_path=self.model_path,
+            device=self.device
         )
-        
-        return has_required or has_alternative
-    
-    def _load_local_model(self) -> None:
-        """
-        Load model and tokenizer from local path.
-        
-        Raises:
-            FileNotFoundError: If model files are not found locally
-            RuntimeError: If model loading fails
-        """
-        try:
-            logger.info(f"Loading model from local path: {self.model_path}")
-            log_model_event("load_start", self.model_name, {"source": "local", "path": self.model_path})
-            
-            # Load tokenizer
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_path,
-                local_files_only=True
-            )
-            
-            # Load model with the simplest approach to avoid meta tensor issues
-            # Avoid device_map="auto" in concurrent scenarios to prevent conflicts
-            self._model = AutoModel.from_pretrained(
-                self.model_path,
-                local_files_only=True,
-                torch_dtype=torch.float32 if self.device == "cpu" else torch.float16,
-                low_cpu_mem_usage=False,  # Avoid using low_cpu_mem_usage which can cause meta tensor issues
-                trust_remote_code=False  # Explicitly set to avoid any unexpected behavior
-            )
-            
-            # Move model to the target device
-            # Handle potential meta tensor issues by using to_empty if needed
-            try:
-                self._model = self._model.to(self.device)
-            except RuntimeError as e:
-                if "meta tensor" in str(e).lower():
-                    # If we encounter a meta tensor error, try using to_empty
-                    try:
-                        # First move to CPU to ensure we have real tensors
-                        self._model = self._model.cpu()
-                        # Then move to the target device
-                        self._model = self._model.to(self.device)
-                    except Exception:
-                        # As a last resort, try to_empty approach
-                        self._model = self._model.to_empty(device=self.device)
-                else:
-                    raise
-            
-            self._model.eval()
-            
-            self._model_loaded = True
-            
-            logger.info(f"Model loaded successfully from {self.model_path}")
-            log_model_event("load_complete", self.model_name, {"source": "local", "device": self.device})
-            
-        except Exception as e:
-            logger.error(f"Failed to load model from local path: {e}")
-            log_model_event("load_error", self.model_name, {"source": "local", "error": str(e)})
-            raise RuntimeError(f"Failed to load model from local path: {e}")
-    
-    def _download_model(self) -> None:
-        """
-        Download model from Hugging Face Hub.
-        
-        Raises:
-            RuntimeError: If model download fails
-        """
-        try:
-            logger.info(f"Downloading model {self.model_name} from Hugging Face Hub")
-            log_model_event("download_start", self.model_name, {"source": "huggingface_hub"})
-            
-            # Create model directory if it doesn't exist
-            model_dir = Path(self.model_path)
-            model_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Download model from Hugging Face Hub
-            snapshot_download(
-                repo_id=self.model_name,
-                local_dir=self.model_path,
-                local_dir_use_symlinks=False
-            )
-            
-            logger.info(f"Model downloaded successfully to {self.model_path}")
-            log_model_event("download_complete", self.model_name, {"source": "huggingface_hub", "path": self.model_path})
-            
-        except Exception as e:
-            logger.error(f"Failed to download model: {e}")
-            log_model_event("download_error", self.model_name, {"source": "huggingface_hub", "error": str(e)})
-            raise RuntimeError(f"Failed to download model: {e}")
-    
-    def _load_transformers_model(self) -> None:
-        """
-        Load model and tokenizer directly from transformers.
-        
-        Raises:
-            RuntimeError: If model loading fails
-        """
-        try:
-            logger.info(f"Loading model {self.transformers_model_name} directly from transformers")
-            log_model_event("load_start", self.transformers_model_name, {"source": "transformers"})
-            
-            # Prepare kwargs for model loading
-            model_kwargs = {
-                "torch_dtype": torch.float32 if self.device == "cpu" else torch.float16,
-                "low_cpu_mem_usage": False,
-                "trust_remote_code": self.transformers_trust_remote_code
-            }
-            
-            # Add cache directory if specified
-            if self.transformers_cache_dir:
-                model_kwargs["cache_dir"] = self.transformers_cache_dir
-            
-            # Load tokenizer
-            tokenizer_kwargs = {"trust_remote_code": self.transformers_trust_remote_code}
-            if self.transformers_cache_dir:
-                tokenizer_kwargs["cache_dir"] = self.transformers_cache_dir
-                
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.transformers_model_name,
-                **tokenizer_kwargs
-            )
-            
-            # Load model
-            self._model = AutoModel.from_pretrained(
-                self.transformers_model_name,
-                **model_kwargs
-            )
-            
-            # Move model to the target device
-            try:
-                self._model = self._model.to(self.device)
-            except RuntimeError as e:
-                if "meta tensor" in str(e).lower():
-                    # If we encounter a meta tensor error, try using to_empty
-                    try:
-                        # First move to CPU to ensure we have real tensors
-                        self._model = self._model.cpu()
-                        # Then move to the target device
-                        self._model = self._model.to(self.device)
-                    except Exception:
-                        # As a last resort, try to_empty approach
-                        self._model = self._model.to_empty(device=self.device)
-                else:
-                    raise
-            
-            self._model.eval()
-            
-            self._model_loaded = True
-            
-            logger.info(f"Model loaded successfully from transformers: {self.transformers_model_name}")
-            log_model_event("load_complete", self.transformers_model_name, {"source": "transformers", "device": self.device})
-            
-        except Exception as e:
-            logger.error(f"Failed to load model from transformers: {e}")
-            log_model_event("load_error", self.transformers_model_name, {"source": "transformers", "error": str(e)})
-            raise RuntimeError(f"Failed to load model from transformers: {e}")
     
     def load_model(self) -> None:
         """
-        Load the model, either from local path, by downloading from Hugging Face Hub,
-        or directly from transformers based on configuration.
+        Load model using the loader pattern.
         
-        This method will:
-        1. If load_from_transformers is True, load directly from transformers
-        2. Otherwise, try to load from local path first
-        3. If not available locally, download from Hugging Face Hub and load
+        Creates a loader if not provided, then uses it to load the model and tokenizer.
         """
-        if self._model_loaded:
-            logger.debug("Model already loaded")
-            return
-        
-        # Check if we should load directly from transformers
-        if self.load_from_transformers:
-            self._load_transformers_model()
-        else:
-            # Try to load from local path first
-            if self._is_model_available_locally():
-                self._load_local_model()
-            else:
-                # Download model from Hugging Face Hub
-                self._download_model()
-                # Load the downloaded model
-                self._load_local_model()
+        try:
+            # Create loader if not provided
+            if not self._loader:
+                self._loader = self._create_loader()
+            
+            logger.info(f"Loading model using loader: {type(self._loader).__name__}")
+            log_model_event("load_start", self.model_name, {"loader": type(self._loader).__name__})
+            
+            # Use loader to load model and tokenizer
+            self._model, self._tokenizer = self._loader.load_model()
+            self._model_loaded = True
+            
+            logger.info(f"Model loaded successfully using {type(self._loader).__name__}")
+            log_model_event("load_complete", self.model_name, {"loader": type(self._loader).__name__})
+            
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            log_model_event("load_error", self.model_name, {"error": str(e)})
+            raise RuntimeError(f"Failed to load model: {e}")
     
-    def _tokenize_inputs(self, inputs: List[str]) -> dict:
+    def _tokenize_inputs(self, inputs: Union[str, List[str]]) -> Dict[str, torch.Tensor]:
         """
         Tokenize input texts.
         
         Args:
-            inputs: List of input texts to tokenize
+            inputs: Single text or list of texts
             
         Returns:
-            dict: Tokenized inputs
+            Dict containing tokenized inputs
         """
-        # Tokenize inputs
         if self._tokenizer is None:
             raise RuntimeError("Tokenizer is not loaded")
         
-        tokenized = self._tokenizer(
+        # Convert single input to list
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        
+        # Tokenize inputs
+        tokenizer = self._tokenizer
+        encoded = tokenizer(
             inputs,
             padding=True,
             truncation=True,
-            max_length=config.max_context_length,
+            max_length=self.max_context_length,
             return_tensors="pt"
         )
         
-        # Move to device
-        tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
-        
-        return tokenized
+        return cast(Dict[str, torch.Tensor], encoded)
     
-    def _mean_pooling(self, model_output, attention_mask):
+    def _mean_pooling(self, model_output: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
-        Perform mean pooling on model output.
+        Perform mean pooling on model outputs.
         
         Args:
-            model_output: Output from the model
-            attention_mask: Attention mask from tokenization
+            model_output: Model output tensor
+            attention_mask: Attention mask tensor
             
         Returns:
-            torch.Tensor: Pooled embeddings
+            Pooled embeddings tensor
         """
-        # First element of model_output contains all token embeddings
-        token_embeddings = model_output[0]
+        # Get token embeddings
+        token_embeddings = model_output[0]  # First element contains token embeddings
         
-        # Expand attention mask to match embedding dimensions
+        # Expand attention mask
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         
-        # Perform mean pooling
+        # Sum embeddings for each token (excluding padding)
         sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+        
+        # Count non-padding tokens
         sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
         
+        # Calculate mean pooling
         return sum_embeddings / sum_mask
     
     def generate_embeddings(self, inputs: Union[str, List[str]]) -> List[List[float]]:
@@ -344,47 +171,49 @@ class ModelManager:
         Generate embeddings for input texts.
         
         Args:
-            inputs: Single text or list of texts to embed
+            inputs: Single text or list of texts
             
         Returns:
             List[List[float]]: List of embedding vectors
-            
-        Raises:
-            RuntimeError: If model is not loaded
-            ValueError: If inputs are invalid
         """
         if not self._model_loaded:
             raise RuntimeError("Model is not loaded. Call load_model() first.")
+        
+        if not inputs:
+            raise ValueError("Inputs cannot be empty")
         
         # Convert single input to list
         if isinstance(inputs, str):
             inputs = [inputs]
         
-        if not inputs:
-            raise ValueError("Inputs cannot be empty")
-        
         # Check batch size limit
-        if len(inputs) > config.max_batch_size:
-            raise ValueError(f"Batch size {len(inputs)} exceeds maximum {config.max_batch_size}")
+        if len(inputs) > self.max_batch_size:
+            logger.warning(f"Input batch size {len(inputs)} exceeds maximum {self.max_batch_size}")
+            raise ValueError(f"Batch size {len(inputs)} exceeds maximum {self.max_batch_size}")
         
         try:
             # Tokenize inputs
-            tokenized = self._tokenize_inputs(inputs)
+            encoded = self._tokenize_inputs(inputs)
+            
+            # Move to device
+            encoded = {key: value.to(self.device) for key, value in encoded.items()}
             
             # Generate embeddings
-            with torch.no_grad():
-                if self._model is None:
-                    raise RuntimeError("Model is not loaded")
-                model_output = self._model(**tokenized)
-                embeddings = self._mean_pooling(model_output, tokenized["attention_mask"])
+            if self._model is None:
+                raise RuntimeError("Model is not loaded")
             
-            # Convert to CPU and then to list
-            embeddings = embeddings.cpu().numpy()
-            embeddings_list = embeddings.tolist()
+            with torch.no_grad():
+                model_output = self._model(**encoded)
+            
+            # Perform mean pooling
+            embeddings = self._mean_pooling(model_output, encoded['attention_mask'])
+            
+            # Convert to list
+            embeddings_list = embeddings.cpu().numpy().tolist()
             
             logger.debug(f"Generated embeddings for {len(inputs)} inputs")
             
-            return embeddings_list
+            return cast(List[List[float]], embeddings_list)
             
         except Exception as e:
             logger.error(f"Failed to generate embeddings: {e}")
@@ -425,12 +254,12 @@ class ModelManager:
         return all_embeddings
     
     @property
-    def model(self):
+    def model(self) -> Optional[Any]:
         """Get the loaded model."""
         return self._model
     
     @property
-    def tokenizer(self):
+    def tokenizer(self) -> Optional[Any]:
         """Get the loaded tokenizer."""
         return self._tokenizer
     
@@ -439,7 +268,7 @@ class ModelManager:
         """Check if the model is loaded."""
         return self._model_loaded
     
-    def get_model_info(self) -> dict:
+    def get_model_info(self) -> Dict[str, Any]:
         """
         Get information about the loaded model.
         
@@ -447,48 +276,62 @@ class ModelManager:
             dict: Model information
         """
         if not self._model_loaded:
-            if self.load_from_transformers:
-                return {
-                    "model_name": self.transformers_model_name,
+            base_info = {
+                "device": self.device,
+                "loaded": False,
+                "max_context_length": config.max_context_length,
+                "embedding_dimension": config.embedding_dimension,
+            }
+            
+            if config.load_from_transformers:
+                base_info.update({
+                    "model_name": config.model_name,
                     "model_path": None,
-                    "device": self.device,
-                    "loaded": False,
                     "load_from_transformers": True,
-                }
+                    "model_source": "transformers",
+                })
             else:
-                return {
-                    "model_name": self.model_name,
-                    "model_path": self.model_path,
-                    "device": self.device,
-                    "loaded": False,
+                base_info.update({
+                    "model_name": config.model_name,
+                    "model_path": config.model_path,
                     "load_from_transformers": False,
-                }
+                    "model_source": config.model_source,
+                })
+            
+            return base_info
         
-        if self.load_from_transformers:
-            return {
-                "model_name": self.transformers_model_name,
+        # Model is loaded, get detailed info
+        base_info = {
+            "device": self.device,
+            "loaded": True,
+            "max_context_length": config.max_context_length,
+            "embedding_dimension": config.embedding_dimension,
+            "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
+            "model_type": self._model.config.model_type if self._model else "",
+        }
+        
+        if config.load_from_transformers:
+            base_info.update({
+                "model_name": config.model_name,
                 "model_path": None,
-                "device": self.device,
-                "loaded": True,
                 "load_from_transformers": True,
-                "max_context_length": config.max_context_length,
-                "embedding_dimension": config.embedding_dimension,
-                "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
-                "model_type": self._model.config.model_type if self._model else "",
+                "model_source": "transformers",
                 "cache_dir": self.transformers_cache_dir,
-            }
+            })
         else:
-            return {
-                "model_name": self.model_name,
-                "model_path": self.model_path,
-                "device": self.device,
-                "loaded": True,
+            base_info.update({
+                "model_name": config.model_name,
+                "model_path": config.model_path,
                 "load_from_transformers": False,
-                "max_context_length": config.max_context_length,
-                "embedding_dimension": config.embedding_dimension,
-                "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
-                "model_type": self._model.config.model_type if self._model else "",
-            }
+                "model_source": config.model_source,
+            })
+        
+        # Add loader-specific information if available
+        if self._loader:
+            loader_info = self._loader.get_model_info()
+            base_info.update(loader_info)
+        
+        return base_info
     
     def save_embeddings_cache(self, embeddings: List[List[float]], inputs: List[str], cache_path: str) -> None:
         """
@@ -503,7 +346,7 @@ class ModelManager:
             cache_data = {
                 "inputs": inputs,
                 "embeddings": embeddings,
-                "model_name": self.model_name,
+                "model_name": config.model_name,
                 "config": {
                     "max_context_length": config.max_context_length,
                     "embedding_dimension": config.embedding_dimension
@@ -535,7 +378,7 @@ class ModelManager:
             
             # Validate cache data
             if (
-                cache_data.get("model_name") != self.model_name or
+                cache_data.get("model_name") != config.model_name or
                 cache_data.get("config", {}).get("max_context_length") != config.max_context_length or
                 cache_data.get("config", {}).get("embedding_dimension") != config.embedding_dimension
             ):
@@ -543,8 +386,29 @@ class ModelManager:
                 return None
             
             logger.info(f"Loaded embeddings cache from {cache_path}")
-            return cache_data
+            return cast(Dict[str, Any], cache_data)
             
         except Exception as e:
             logger.error(f"Failed to load embeddings cache: {e}")
             return None
+    
+    def cleanup(self) -> None:
+        """
+        Clean up resources and unload the model.
+        """
+        if self._loader:
+            self._loader.cleanup()
+            self._loader = None
+        
+        self._model = None
+        self._tokenizer = None
+        self._model_loaded = False
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        logger.info("ModelManager cleanup completed")
