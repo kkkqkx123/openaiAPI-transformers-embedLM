@@ -4,7 +4,7 @@ from emb_model_provider.api.exceptions import EmbeddingAPIError
 from typing import Union
 
 
-async def embedding_api_exception_handler(request: Request, exc: Union[EmbeddingAPIError, Exception]):
+async def embedding_api_exception_handler(request: Request, exc: Union[EmbeddingAPIError, Exception]) -> JSONResponse:
     """
     嵌入API异常处理器
     根据设计文档中的错误处理部分实现
@@ -50,7 +50,7 @@ async def embedding_api_exception_handler(request: Request, exc: Union[Embedding
         )
 
 
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     全局异常处理器，处理未预期的异常
     """

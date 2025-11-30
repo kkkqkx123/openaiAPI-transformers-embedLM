@@ -21,7 +21,7 @@ class ModelsResponse(BaseModel):
 
 
 @router.get("/v1/models", response_model=ModelsResponse)
-async def list_models():
+async def list_models() -> ModelsResponse:
     """
     列出所有可用模型的API端点（包括别名）
     """

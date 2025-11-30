@@ -8,11 +8,14 @@ interface for loading models from ModelScope hub.
 import os
 from typing import Optional, Dict, Any, List, cast
 from pathlib import Path
+import torch
 
 from .base_loader import BaseModelLoader
 from ..core.config import config
 from ..core.logging import get_logger, log_model_event
 from ..api.exceptions import ModelLoadError
+
+# Import modelscope for type checking is done inside functions to support offline testing
 
 
 class ModelScopeModelLoader(BaseModelLoader):
@@ -88,8 +91,8 @@ class ModelScopeModelLoader(BaseModelLoader):
         try:
             # Try to import ModelScope
             try:
-                from modelscope.pipelines import pipeline
-                from modelscope.utils.constant import Tasks
+                from modelscope.pipelines import pipeline  # type: ignore[import-untyped]
+                from modelscope.utils.constant import Tasks  # type: ignore[import-untyped]
             except ImportError as e:
                 self.logger.error(f"ModelScope not installed: {e}")
                 raise ModelLoadError(
@@ -104,7 +107,7 @@ class ModelScopeModelLoader(BaseModelLoader):
             log_model_event("load_start", self.model_name, {"source": "modelscope", "model_id": modelscope_id})
             
             # Set device before loading model
-            self.device = self.get_device()
+            self.device = self.get_device()  # type: ignore[assignment]  # Base class defines as Optional[str] but we know it's str
             
             # Determine device for ModelScope
             device = "gpu" if self.device and self.device.startswith("cuda") else "cpu"
@@ -172,7 +175,6 @@ class ModelScopeModelLoader(BaseModelLoader):
         Returns:
             Optional[torch.dtype]: Optimal precision dtype, or None if auto-selection should be used
         """
-        import torch
         
         # 1. Check user configuration first (highest priority)
         precision_config = getattr(config, 'model_precision', None)
@@ -198,14 +200,17 @@ class ModelScopeModelLoader(BaseModelLoader):
                 native_dtype = model_config.torch_dtype
                 if native_dtype is not None:
                     self.logger.info(f"Using model's native precision: {native_dtype}")
-                    return native_dtype
+                    return cast(torch.dtype, native_dtype)  # type: ignore[no-any-return]
             
             # Check for quantization config that might indicate precision preferences
             if hasattr(model_config, 'quantization_config'):
                 quant_config = model_config.quantization_config
                 if hasattr(quant_config, 'bnb_4bit_compute_dtype'):
-                    return quant_config.bnb_4bit_compute_dtype
+                    return cast(torch.dtype, quant_config.bnb_4bit_compute_dtype)  # type: ignore[no-any-return]
         
+        except ImportError:
+            # If modelscope is not available, skip config loading
+            self.logger.debug("ModelScope not available, skipping config loading for precision detection")
         except Exception as e:
             # If config loading fails, fall back to heuristic approach
             self.logger.debug(f"Could not load model config for precision detection: {e}")
@@ -240,11 +245,6 @@ class ModelScopeModelLoader(BaseModelLoader):
         Returns:
             ModelScope model ID
         """
-        # Use config mapping if available
-        if hasattr(config, 'modelscope_model_mapping') and config.modelscope_model_mapping:
-            if model_name in config.modelscope_model_mapping:
-                return cast(str, config.modelscope_model_mapping[model_name])
-        
         # Use default mapping
         return self._default_model_mappings.get(model_name, model_name)
     
@@ -389,13 +389,8 @@ class ModelScopeModelLoader(BaseModelLoader):
         Clean up model resources.
         """
         if self._pipeline is not None:
-            # ModelScope pipeline cleanup
-            try:
-                if hasattr(self._pipeline, 'clear'):
-                    self._pipeline.clear()
-            except Exception as e:
-                self.logger.warning(f"Error during ModelScope pipeline cleanup: {e}")
-            
+            # ModelScope pipeline cleanup - just delete the reference
+            # The actual cleanup will be handled by Python's garbage collector
             del self._pipeline
             self._pipeline = None
         

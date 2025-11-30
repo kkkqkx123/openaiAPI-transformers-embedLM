@@ -84,7 +84,8 @@ class HuggingFaceModelLoader(BaseModelLoader):
         
         try:
             # Set device before loading model
-            self.device = self.get_device()
+            device = self.get_device()
+            self.device = device  # type: ignore[assignment]  # Base class defines as Optional[str] but we know it's str
             
             # Check if we should load directly from transformers
             if self.load_from_transformers:
@@ -255,7 +256,7 @@ class HuggingFaceModelLoader(BaseModelLoader):
             elif self.model_precision == "fp32":
                 return torch.float32
             elif self.model_precision == "bf16":
-                if self.device.startswith("cuda") and torch.cuda.is_bf16_supported():
+                if self.device and self.device.startswith("cuda") and torch.cuda.is_bf16_supported():
                     return torch.bfloat16
                 else:
                     self.logger.warning("bfloat16 not supported on this device, falling back to fp16")
@@ -276,13 +277,20 @@ class HuggingFaceModelLoader(BaseModelLoader):
                 native_dtype = model_config.torch_dtype
                 if native_dtype is not None:
                     self.logger.info(f"Using model's native precision: {native_dtype}")
-                    return native_dtype
+                    # Ensure we return a valid torch dtype
+                    if isinstance(native_dtype, torch.dtype):
+                        return native_dtype
+                    # Fallback to default if native dtype is not a torch dtype
             
             # Check for quantization config that might indicate precision preferences
             if hasattr(model_config, 'quantization_config'):
                 quant_config = model_config.quantization_config
                 if hasattr(quant_config, 'bnb_4bit_compute_dtype'):
-                    return quant_config.bnb_4bit_compute_dtype
+                    compute_dtype = quant_config.bnb_4bit_compute_dtype
+                    if isinstance(compute_dtype, torch.dtype):
+                        return compute_dtype
+                    # Fallback to fp16 for quantization
+                    return torch.float16
         
         except Exception as e:
             # If config loading fails, fall back to heuristic approach

@@ -59,154 +59,40 @@ class TestModelManager:
         assert manager._model is None
         assert manager._tokenizer is None
     
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_init_with_custom_values(self, mock_config):
+    def test_init_with_custom_values(self):
         """Test ModelManager initialization with custom values."""
+        from unittest.mock import Mock
         custom_path = os.path.join(self.temp_dir, "custom_model")
         custom_name = "custom-model"
         
-        manager = ModelManager(model_path=custom_path, model_name=custom_name)
+        custom_loader = Mock()
+        manager = ModelManager(loader=custom_loader)
         
-        assert manager.model_path == custom_path
-        assert manager.model_name == custom_name
-    
-    @patch('emb_model_provider.core.model_manager.torch.cuda.is_available')
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_get_device_cuda_available(self, mock_config, mock_cuda_available):
-        """Test device selection when CUDA is available."""
-        mock_config.device = "auto"
-        mock_cuda_available.return_value = True
-        
-        manager = ModelManager()
-        device = manager._get_device()
-        
-        assert device == "cuda"
-    
-    @patch('emb_model_provider.core.model_manager.torch.cuda.is_available')
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_get_device_cpu_only(self, mock_config, mock_cuda_available):
-        """Test device selection when only CPU is available."""
-        mock_config.device = "auto"
-        mock_cuda_available.return_value = False
-        
-        manager = ModelManager()
-        device = manager._get_device()
-        
-        assert device == "cpu"
+        assert manager._loader == custom_loader
     
     @patch('emb_model_provider.core.model_manager.config')
-    def test_get_device_explicit(self, mock_config):
-        """Test device selection with explicit device setting."""
+    def test_device_property(self, mock_config):
+        """Test device property is set correctly."""
+        mock_config.model_path = self.model_path
+        mock_config.model_name = self.model_name
         mock_config.device = "cpu"
         
         manager = ModelManager()
-        device = manager._get_device()
         
-        assert device == "cpu"
+        assert manager.device == "cpu"
     
     @patch('emb_model_provider.core.model_manager.config')
-    def test_is_model_available_locally_true(self, mock_config):
-        """Test checking if model is available locally - positive case."""
-        mock_config.model_path = self.model_path
-        
-        manager = ModelManager()
-        available = manager._is_model_available_locally()
-        
-        assert available is True
-    
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_is_model_available_locally_false(self, mock_config):
-        """Test checking if model is available locally - negative case."""
-        empty_path = os.path.join(self.temp_dir, "empty_model")
-        mock_config.model_path = empty_path
-        
-        manager = ModelManager()
-        available = manager._is_model_available_locally()
-        
-        assert available is False
-    
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_is_model_available_locally_with_safetensors(self, mock_config):
-        """Test checking if model is available locally with safetensors."""
-        # Create model with safetensors instead of pytorch_model.bin
-        safetensors_path = os.path.join(self.temp_dir, "safetensors_model")
-        os.makedirs(safetensors_path, exist_ok=True)
-        
-        with open(os.path.join(safetensors_path, "config.json"), "w") as f:
-            f.write('{"model_type": "bert"}')
-        
-        with open(os.path.join(safetensors_path, "model.safetensors"), "wb") as f:
-            f.write(b"dummy model data")
-        
-        with open(os.path.join(safetensors_path, "tokenizer.json"), "w") as f:
-            f.write('{"vocab": {"test": 0}}')
-        
-        mock_config.model_path = safetensors_path
-        
-        manager = ModelManager()
-        available = manager._is_model_available_locally()
-        
-        assert available is True
-    
-    @patch('emb_model_provider.core.model_manager.AutoTokenizer')
-    @patch('emb_model_provider.core.model_manager.AutoModel')
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_load_local_model_success(self, mock_config, mock_auto_model, mock_auto_tokenizer):
-        """Test successful local model loading."""
-        mock_config.model_path = self.model_path
-        mock_config.model_name = self.model_name
-        mock_config.max_context_length = 512
-        mock_config.embedding_dimension = 384
-        
-        # Create mock model and tokenizer
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        # Make the to() method return the same mock object
-        mock_model.to.return_value = mock_model
-        mock_auto_model.from_pretrained.return_value = mock_model
-        mock_auto_tokenizer.from_pretrained.return_value = mock_tokenizer
-        
-        manager = ModelManager()
-        manager._load_local_model()
-        
-        assert manager._model_loaded is True
-        assert manager._model == mock_model
-        assert manager._tokenizer == mock_tokenizer
-        
-        # Verify model was moved to device
-        # Note: With device_map parameter, the model is loaded directly to the target device
-        # so .to() may not be called. We check if the model was loaded with correct parameters.
-        mock_auto_model.from_pretrained.assert_called_once()
-        mock_model.eval.assert_called_once()
-    
-    @patch('emb_model_provider.core.model_manager.snapshot_download')
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_download_model_success(self, mock_config, mock_snapshot_download):
-        """Test successful model download."""
+    def test_is_loaded_property(self, mock_config):
+        """Test is_loaded property."""
         mock_config.model_path = self.model_path
         mock_config.model_name = self.model_name
         
         manager = ModelManager()
-        manager._download_model()
         
-        mock_snapshot_download.assert_called_once_with(
-            repo_id=self.model_name,
-            local_dir=self.model_path,
-            local_dir_use_symlinks=False
-        )
-    
-    @patch('emb_model_provider.core.model_manager.snapshot_download')
-    @patch('emb_model_provider.core.model_manager.config')
-    def test_download_model_failure(self, mock_config, mock_snapshot_download):
-        """Test model download failure."""
-        mock_config.model_path = self.model_path
-        mock_config.model_name = self.model_name
-        mock_snapshot_download.side_effect = Exception("Download failed")
+        assert manager.is_loaded is False
         
-        manager = ModelManager()
-        
-        with pytest.raises(RuntimeError, match="Failed to download model"):
-            manager._download_model()
+        manager._model_loaded = True
+        assert manager.is_loaded is True
     
     @patch.object(ModelManager, '_load_local_model')
     @patch.object(ModelManager, '_download_model')

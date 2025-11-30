@@ -183,10 +183,10 @@ class Config(BaseSettings):
         description="Model precision to use: auto, fp32, fp16, bf16, int8, int4"
     )
     
-    # Model-specific precision overrides (JSON format)
-    model_precision_overrides: str = Field(
+    # Model-specific precision overrides (JSON format or dict)
+    model_precision_overrides: Union[str, Dict[str, str]] = Field(
         default="{}",
-        description="JSON string mapping model names to precision settings"
+        description="JSON string or dict mapping model names to precision settings"
     )
     
     # Quantization configuration
@@ -284,14 +284,23 @@ class Config(BaseSettings):
 
     def get_model_precision_overrides(self) -> Dict[str, str]:
         """
-        Parse the model precision overrides from JSON string.
+        Parse the model precision overrides from JSON string or dict.
 
         Returns:
             Dict[str, str]: Mapping of model names to precision settings
         """
         try:
-            return json.loads(self.model_precision_overrides)
-        except (json.JSONDecodeError, AttributeError):
+            # If already a dict, return it directly
+            if isinstance(self.model_precision_overrides, dict):
+                return {str(k): str(v) for k, v in self.model_precision_overrides.items()}
+            
+            # If it's a string, try to parse as JSON
+            result = json.loads(self.model_precision_overrides)
+            # Ensure the result is a dictionary with string keys and values
+            if isinstance(result, dict):
+                return {str(k): str(v) for k, v in result.items()}
+            return {}
+        except (json.JSONDecodeError, AttributeError, TypeError):
             return {}
 
     def get_precision_for_model(self, model_name: str) -> str:

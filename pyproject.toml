@@ -36,6 +36,7 @@ dependencies = [
     'pytest>=7.0.0',
     'pytest-asyncio',
     "modelscope>=1.32.0",
+    "addict>=2.4.0",
 ]
 [project.optional-dependencies]
 dev = ['black', 'isort', 'flake8']

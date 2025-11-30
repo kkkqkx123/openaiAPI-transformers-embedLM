@@ -86,7 +86,7 @@ class TestThreadSafeTokenizerManager:
             assert tokenizer == mock_tokenizer_copy
         
         # 验证tokenizer被释放回池中
-        assert len(manager._pool_available) == 1
+        assert len(manager._available_thread_ids) == 1
     
     def test_get_tokenizer_info(self):
         """测试获取tokenizer信息"""

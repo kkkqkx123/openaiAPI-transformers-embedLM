@@ -6,7 +6,7 @@ length-based grouping and dynamic batching strategies.
 """
 
 import time
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 import numpy as np
 
@@ -25,14 +25,14 @@ class BatchGroup:
     max_length: int
     size: int
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.size = len(self.texts)
 
 
 class LengthBasedBatchOptimizer:
     """基于长度的批处理优化器"""
     
-    def __init__(self, config: Config, tokenizer):
+    def __init__(self, config: Config, tokenizer: Any) -> None:
         self.config = config
         self.tokenizer = tokenizer
         self.length_tolerance = config.length_group_tolerance
@@ -158,7 +158,7 @@ class LengthBasedBatchOptimizer:
 class DynamicBatchOptimizer:
     """动态批处理优化器"""
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config) -> None:
         self.config = config
         self.max_wait_time = config.max_wait_time_ms / 1000.0  # 转换为秒
         self.min_batch_size = config.min_batch_size
@@ -218,7 +218,7 @@ class DynamicBatchOptimizer:
 class BatchProcessingOptimizer:
     """批处理优化器主类"""
     
-    def __init__(self, config: Config, tokenizer):
+    def __init__(self, config: Config, tokenizer: Any) -> None:
         self.config = config
         self.length_optimizer = LengthBasedBatchOptimizer(config, tokenizer)
         self.dynamic_optimizer = DynamicBatchOptimizer(config)

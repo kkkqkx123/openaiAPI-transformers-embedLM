@@ -51,7 +51,7 @@ app.include_router(models_router)
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> dict:
     """
     健康检查端点
     对应需求: 设计文档中的测试策略
@@ -60,7 +60,7 @@ async def health_check():
 
 
 @app.get("/")
-async def root():
+async def root() -> dict:
     """
     根端点，提供API基本信息
     """
@@ -72,7 +72,7 @@ async def root():
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
+async def shutdown_event() -> None:
     """
     应用关闭时的清理工作
     """
@@ -86,7 +86,7 @@ async def shutdown_event():
         logging.getLogger(__name__).error(f"Error during shutdown: {e}")
 
 
-def run_server():
+def run_server() -> None:
     """
     运行服务器的便捷函数
     """

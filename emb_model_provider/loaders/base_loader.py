@@ -141,7 +141,9 @@ class BaseModelLoader(ABC):
             return None
             
         try:
-            return sum(p.numel() for p in self.model.parameters())
+            if hasattr(self.model, 'parameters'):
+                return sum(p.numel() for p in self.model.parameters())  # type: ignore[union-attr]
+            return None
         except Exception:
             return None
     
