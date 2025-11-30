@@ -66,10 +66,6 @@ class Config(BaseSettings):
         default="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         description="Model name to load directly from transformers (used when load_from_transformers=True)"
     )
-    transformers_cache_dir: Optional[str] = Field(
-        default=None,
-        description="Custom cache directory for transformers models (None uses default cache)"
-    )
     transformers_trust_remote_code: bool = Field(
         default=False,
         description="Whether to trust remote code when loading from transformers"
@@ -79,10 +75,6 @@ class Config(BaseSettings):
     modelscope_model_name: str = Field(
         default="",
         description="ModelScope model name to load (used when modelscope_enabled=True)"
-    )
-    modelscope_cache_dir: Optional[str] = Field(
-        default=None,
-        description="Custom cache directory for ModelScope models (None uses default cache)"
     )
     modelscope_trust_remote_code: bool = Field(
         default=False,
@@ -105,6 +97,36 @@ class Config(BaseSettings):
     model_source: str = Field(
         default="huggingface",
         description="Model source to use: 'huggingface' or 'modelscope' (alias for modelscope_model_provider)"
+    )
+    
+    # Multi-source model loading configuration
+    enable_multi_source_loading: bool = Field(
+        default=False,
+        description="Enable support for multiple model loading sources simultaneously"
+    )
+    
+    # Preloading configuration
+    preload_models: str = Field(
+        default="",
+        description="Comma-separated list of model aliases to preload at startup"
+    )
+    
+    # Dynamic loading configuration for non-preloaded models
+    enable_dynamic_model_loading: bool = Field(
+        default=True,
+        description="Enable dynamic loading of models that are not preloaded"
+    )
+    
+    # Offline mode configuration
+    enable_offline_mode: bool = Field(
+        default=False,
+        description="Enable offline mode (only use local models, no network downloads)"
+    )
+    
+    # Path priority configuration
+    enable_path_priority: bool = Field(
+        default=True,
+        description="When path is specified, prioritize loading from local path over remote sources"
     )
 
     # Processing configuration
@@ -427,10 +449,8 @@ class Config(BaseSettings):
             "device": self.device,
             "load_from_transformers": self.load_from_transformers,
             "transformers_model_name": self.transformers_model_name,
-            "transformers_cache_dir": self.transformers_cache_dir,
             "transformers_trust_remote_code": self.transformers_trust_remote_code,
             "modelscope_model_name": self.modelscope_model_name,
-            "modelscope_cache_dir": self.modelscope_cache_dir,
             "modelscope_trust_remote_code": self.modelscope_trust_remote_code,
             "modelscope_revision": self.modelscope_revision,
             "modelscope_model_provider": self.modelscope_model_provider,
@@ -561,7 +581,7 @@ class Config(BaseSettings):
         Parse the model mapping JSON string into a dictionary.
         
         Returns:
-            dict: Dictionary mapping aliases to actual model names and paths
+            dict: Dictionary mapping aliases to model configuration dictionaries
         """
         if not self.model_mapping or self.model_mapping == "{}":
             return {}
@@ -569,6 +589,38 @@ class Config(BaseSettings):
         try:
             result = json.loads(self.model_mapping)
             if isinstance(result, dict):
+                # 确保每个模型配置都有完整的配置项
+                for alias, model_config in result.items():
+                    if isinstance(model_config, str):
+                        # 如果是字符串格式，转换为配置字典
+                        result[alias] = {
+                            "name": model_config,
+                            "path": "",
+                            "source": self.model_source,  # 使用全局配置
+                            "precision": self.get_precision_for_model(model_config),
+                            "cache_dir": None,
+                            "trust_remote_code": False
+                        }
+                    elif isinstance(model_config, dict):
+                        # 确保配置字典有必要的字段
+                        if "name" not in model_config:
+                            logger.warning(f"Model configuration for '{alias}' missing 'name' field")
+                            continue
+                        
+                        # 设置默认值
+                        model_config.setdefault("path", "")
+                        model_config.setdefault("source", self.model_source)
+                        model_config.setdefault("precision", self.get_precision_for_model(model_config["name"]))
+                        model_config.setdefault("cache_dir", None)
+                        model_config.setdefault("trust_remote_code", False)
+                        model_config.setdefault("revision", "main")
+                        model_config.setdefault("fallback_to_huggingface", True)
+                        model_config.setdefault("load_from_transformers", self.load_from_transformers)
+                        
+                        # 如果指定了path，优先使用离线模式
+                        if model_config["path"] and self.enable_path_priority:
+                            model_config["source"] = "transformers"
+                
                 return result
             else:
                 logger.warning("Model mapping JSON is not a dictionary")
@@ -579,36 +631,75 @@ class Config(BaseSettings):
     
     def get_model_info(self, alias: str) -> dict:
         """
-        Get model information (name and path) for a given alias.
+        Get model information for a given alias.
         
         Args:
             alias: Model alias
             
         Returns:
-            dict: Dictionary containing model name and path, or empty dict if not found
+            dict: Dictionary containing model configuration, or empty dict if not found
         """
         model_mapping = self.get_model_mapping()
         if alias in model_mapping:
-            model_info = model_mapping[alias]
-            # If model_info is a string, it's just the model name
-            if isinstance(model_info, str):
-                return {
-                    "name": model_info,
-                    "path": self.model_path  # Use default path
-                }
-            # If model_info is a dict, it contains both name and path
-            elif isinstance(model_info, dict):
-                return {
-                    "name": model_info.get("name", alias),
-                    "path": model_info.get("path", self.model_path)
-                }
-        # If alias not found, check if it's the default model
+            model_config = model_mapping[alias]
+            
+            # 返回完整的模型配置
+            return {
+                "name": model_config.get("name", alias),
+                "path": model_config.get("path", self.model_path),
+                "source": model_config.get("source", self.model_source),
+                "precision": model_config.get("precision", self.get_precision_for_model(model_config.get("name", alias))),
+                "cache_dir": model_config.get("cache_dir", None),
+                "trust_remote_code": model_config.get("trust_remote_code", False),
+                "revision": model_config.get("revision", "main"),
+                "fallback_to_huggingface": model_config.get("fallback_to_huggingface", True),
+                "load_from_transformers": model_config.get("load_from_transformers", self.load_from_transformers)
+            }
+        
+        # 如果别名未找到，检查是否是默认模型
         elif alias == self.model_name:
             return {
                 "name": self.model_name,
-                "path": self.model_path
+                "path": self.model_path,
+                "source": self.model_source,
+                "precision": self.model_precision,
+                "cache_dir": None,
+                "trust_remote_code": False,
+                "revision": "main",
+                "fallback_to_huggingface": True,
+                "load_from_transformers": self.load_from_transformers
             }
+        
         return {}
+    
+    def get_preload_models(self) -> List[str]:
+        """
+        Get the list of model aliases to preload.
+        
+        Returns:
+            List[str]: List of model aliases to preload
+        """
+        if not self.preload_models:
+            return []
+        
+        try:
+            return [alias.strip() for alias in self.preload_models.split(',') if alias.strip()]
+        except Exception:
+            logger.warning("Failed to parse preload_models configuration")
+            return []
+    
+    def is_model_preloaded(self, alias: str) -> bool:
+        """
+        Check if a model is configured to be preloaded.
+        
+        Args:
+            alias: Model alias
+            
+        Returns:
+            bool: True if the model should be preloaded
+        """
+        preload_list = self.get_preload_models()
+        return alias in preload_list or alias == self.model_name
 
 
 # Global configuration instance

@@ -31,8 +31,8 @@ class HuggingFaceModelLoader(BaseModelLoader):
     - Automatic device placement and optimization
     """
     
-    def __init__(self, model_name: str, model_path: Optional[str] = None, 
-                 cache_dir: Optional[str] = None, trust_remote_code: bool = False, **kwargs: Any):
+    def __init__(self, model_name: str, model_path: Optional[str] = None,
+                 trust_remote_code: bool = False, **kwargs: Any):
         """
         Initialize the HuggingFace model loader.
         
@@ -41,14 +41,14 @@ class HuggingFaceModelLoader(BaseModelLoader):
             model_path: Optional local path to the model
             **kwargs: Additional configuration options
         """
-        super().__init__(model_name, model_path)
+        super().__init__(model_name, model_path, trust_remote_code)
         
         # Initialize logger
         self.logger = get_logger("emb_model_provider.loaders.huggingface")
         
         # HuggingFace specific configuration
         self.transformers_model_name = kwargs.get('transformers_model_name', model_name)
-        self.transformers_cache_dir = kwargs.get('transformers_cache_dir', config.transformers_cache_dir)
+        # Note: transformers_cache_dir is no longer used as HuggingFace manages its own cache
         self.transformers_trust_remote_code = kwargs.get('transformers_trust_remote_code', False)
         self.load_from_transformers = kwargs.get('load_from_transformers', False)
         
@@ -151,14 +151,10 @@ class HuggingFaceModelLoader(BaseModelLoader):
                 if self.enable_gpu_memory_optimization:
                     model_kwargs["device_map"] = "auto"
             
-            # Add cache directory if specified
-            if self.transformers_cache_dir:
-                model_kwargs["cache_dir"] = self.transformers_cache_dir
+            # Note: transformers_cache_dir is no longer used as HuggingFace manages its own cache
             
             # Load tokenizer
             tokenizer_kwargs = {"trust_remote_code": self.transformers_trust_remote_code}
-            if self.transformers_cache_dir:
-                tokenizer_kwargs["cache_dir"] = self.transformers_cache_dir
                 
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.transformers_model_name,
@@ -194,7 +190,14 @@ class HuggingFaceModelLoader(BaseModelLoader):
             ModelLoadError: If model loading fails
         """
         try:
-            model_path = self.model_path or os.path.join(self.transformers_cache_dir or "models", self.model_name)
+            # When model_path is explicitly provided, use it directly
+            # Note: cache_dir is no longer used as HuggingFace manages its own cache
+            if self.model_path:
+                model_path = self.model_path
+            else:
+                # Fallback to transformers cache if no model path provided
+                # Use default transformers cache location
+                model_path = os.path.join("models", self.model_name)
             self.logger.info(f"Loading model from local path: {model_path}")
             log_model_event("load_start", self.model_name, {"source": "local", "path": model_path})
             
@@ -327,12 +330,20 @@ class HuggingFaceModelLoader(BaseModelLoader):
             self.logger.info(f"Downloading model {self.model_name} from Hugging Face Hub")
             log_model_event("download_start", self.model_name, {"source": "huggingface_hub"})
             
-            cache_dir = self.model_path or os.path.join(self.transformers_cache_dir or "models", self.model_name)
+            # Determine the cache directory for download
+            # Note: cache_dir is no longer used as HuggingFace manages its own cache
+            # Priority: model_path (if it's a directory) > transformers_cache_dir > default
+            if self.model_path and os.path.isdir(self.model_path):
+                cache_dir = self.model_path
+            else:
+                # Use transformers cache as HuggingFace manages its own cache
+                # Use default transformers cache location
+                cache_dir = os.path.join("models", self.model_name)
             os.makedirs(cache_dir, exist_ok=True)
             
-            # Download model files
+            # Use the model name directly as specified in the configuration
             snapshot_download(
-                repo_id=f"sentence-transformers/{self.model_name}",
+                repo_id=self.model_name,
                 cache_dir=cache_dir,
                 local_dir=cache_dir,
                 local_dir_use_symlinks=False
@@ -356,7 +367,8 @@ class HuggingFaceModelLoader(BaseModelLoader):
         if self.load_from_transformers:
             return True  # Always available when loading from transformers
         
-        model_path = self.model_path or os.path.join(self.transformers_cache_dir or "models", self.model_name)
+        # Use default transformers cache location since transformers_cache_dir is no longer used
+        model_path = self.model_path or os.path.join("models", self.model_name)
         
         if not os.path.exists(model_path):
             return False
@@ -392,7 +404,7 @@ class HuggingFaceModelLoader(BaseModelLoader):
             "embedding_dimension": config.embedding_dimension,
             "vocab_size": self._tokenizer.vocab_size if self._tokenizer else 0,
             "model_type": self._model.config.model_type if self._model else "",
-            "cache_dir": self.cache_dir,
+            # Note: cache_dir is no longer included as it's managed by the model libraries
             "source": "transformers" if self.load_from_transformers else "huggingface" if not self.model_path else "local",
         }
     

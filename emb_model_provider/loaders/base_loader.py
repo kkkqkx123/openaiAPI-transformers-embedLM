@@ -25,21 +25,19 @@ class BaseModelLoader(ABC):
     and ModelScope.
     """
     
-    def __init__(self, model_name: str, model_path: Optional[str] = None, 
-                 cache_dir: Optional[str] = None, trust_remote_code: bool = False, **kwargs: Any) -> None:
+    def __init__(self, model_name: str, model_path: Optional[str] = None,
+                 trust_remote_code: bool = False, **kwargs: Any) -> None:
         """
         Initialize the model loader.
         
         Args:
             model_name: Name or path of the model
             model_path: Optional local path to the model
-            cache_dir: Directory to cache downloaded models
             trust_remote_code: Whether to trust remote code
             **kwargs: Additional loader-specific parameters
         """
         self.model_name = model_name
         self.model_path = model_path
-        self.cache_dir = cache_dir
         self.trust_remote_code = trust_remote_code
         self.kwargs = kwargs
         
@@ -47,6 +45,7 @@ class BaseModelLoader(ABC):
         self.model = None
         self.tokenizer = None
         self.device = None
+        # Note: cache_dir is no longer used as HuggingFace and ModelScope manage their own caches
         
     @abstractmethod
     def load_model(self) -> tuple:

@@ -6,9 +6,7 @@ from emb_model_provider.api.embeddings import router as embeddings_router
 from emb_model_provider.api.models import router as models_router
 from emb_model_provider.api.middleware import exception_handlers, global_exception_handler
 import uvicorn
-import logging
 import atexit
-import asyncio
 
 
 # 设置日志

@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 
 from .base_loader import BaseModelLoader
-from ..core.config import config
+from ..core.config import Config, config
 from ..core.logging import get_logger, log_model_event
 from ..api.exceptions import ModelLoadError
 
@@ -29,50 +29,42 @@ class ModelScopeModelLoader(BaseModelLoader):
     - Fallback to HuggingFace when ModelScope fails (if configured)
     """
     
-    def __init__(self, model_name: str, model_path: Optional[str] = None, 
-                 cache_dir: Optional[str] = None, trust_remote_code: bool = False, **kwargs: Any):
+    def __init__(self, model_name: str, model_path: Optional[str] = None,
+                 trust_remote_code: bool = False,
+                 config_instance: Optional[Config] = None, **kwargs: Any):
         """
         Initialize the ModelScope model loader.
         
         Args:
             model_name: Name of the model (e.g., 'all-MiniLM-L12-v2')
             model_path: Optional local path to the model
+            config_instance: Optional config instance to use (defaults to global config)
             **kwargs: Additional configuration options
         """
-        super().__init__(model_name, model_path, cache_dir, trust_remote_code, **kwargs)
+        super().__init__(model_name, model_path, trust_remote_code, **kwargs)
+        
+        # Use provided config instance or fall back to global config
+        self.config = config_instance or config
         
         # Initialize logger
         self.logger = get_logger("emb_model_provider.loaders.modelscope")
         
         # ModelScope specific configuration
-        self.modelscope_model_name = kwargs.get('modelscope_model_name', config.modelscope_model_name or model_name)
-        self.modelscope_cache_dir = kwargs.get('modelscope_cache_dir', config.modelscope_cache_dir)
-        self.modelscope_trust_remote_code = kwargs.get('modelscope_trust_remote_code', config.modelscope_trust_remote_code)
-        self.modelscope_revision = kwargs.get('modelscope_revision', config.modelscope_revision)
+        self.modelscope_model_name = kwargs.get('modelscope_model_name', self.config.modelscope_model_name or model_name)
+        # Note: modelscope_cache_dir is no longer used as ModelScope manages its own cache
+        self.modelscope_trust_remote_code = kwargs.get('modelscope_trust_remote_code', self.config.modelscope_trust_remote_code)
+        self.modelscope_revision = kwargs.get('modelscope_revision', self.config.modelscope_revision)
         
         # Precision configuration from kwargs or config
-        self.model_precision = kwargs.get('model_precision', getattr(config, 'model_precision', 'auto'))
-        self.enable_quantization = kwargs.get('enable_quantization', getattr(config, 'enable_quantization', False))
-        self.quantization_method = kwargs.get('quantization_method', getattr(config, 'quantization_method', 'int8'))
-        self.enable_gpu_memory_optimization = kwargs.get('enable_gpu_memory_optimization', 
-                                                        getattr(config, 'enable_gpu_memory_optimization', False))
+        self.model_precision = kwargs.get('model_precision', getattr(self.config, 'model_precision', 'auto'))
+        self.enable_quantization = kwargs.get('enable_quantization', getattr(self.config, 'enable_quantization', False))
+        self.quantization_method = kwargs.get('quantization_method', getattr(self.config, 'quantization_method', 'int8'))
+        self.enable_gpu_memory_optimization = kwargs.get('enable_gpu_memory_optimization',
+                                                        getattr(self.config, 'enable_gpu_memory_optimization', False))
         
         # Model components
         self._pipeline = None
         self._model_loaded = False
-        
-        # Default model mappings from HuggingFace to ModelScope
-        self._default_model_mappings = {
-            "sentence-transformers/all-MiniLM-L6-v2": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            "sentence-transformers/all-MiniLM-L12-v2": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            "BAAI/bge-small-en-v1.5": "BAAI/bge-small-en-v1.5",
-            "BAAI/bge-base-en-v1.5": "BAAI/bge-base-en-v1.5",
-            "thenlper/gte-small": "thenlper/gte-small",
-            "thenlper/gte-base": "thenlper/gte-base",
-            # Chinese models
-            "shibing624/text2vec-base-chinese": "damo/nlp_gte_sentence-embedding_chinese-base",
-            "GanymedeNil/text2vec-large-chinese": "damo/nlp_gte_sentence-embedding_chinese-base",
-        }
     
     def load_model(self) -> tuple:
         """
@@ -100,8 +92,8 @@ class ModelScopeModelLoader(BaseModelLoader):
                     self.model_name
                 )
             
-            # Map model name to ModelScope ID if needed
-            modelscope_id = self._map_model_name_to_modelscope(self.model_name)
+            # Use the model name directly since ModelScopeModelLoader is only used when source is 'modelscope'
+            modelscope_id = self.model_name
             
             self.logger.info(f"Loading ModelScope model: {modelscope_id}")
             log_model_event("load_start", self.model_name, {"source": "modelscope", "model_id": modelscope_id})
@@ -113,7 +105,8 @@ class ModelScopeModelLoader(BaseModelLoader):
             device = "gpu" if self.device and self.device.startswith("cuda") else "cpu"
             
             # Prepare cache directory
-            cache_dir = self.modelscope_cache_dir or os.path.expanduser("~/.cache/modelscope/hub/")
+            # Use default ModelScope cache directory since we're not managing it explicitly
+            cache_dir = os.path.expanduser("~/.cache/modelscope/hub/")
             os.makedirs(cache_dir, exist_ok=True)
             
             # Smart precision selection based on model requirements and device capabilities
@@ -234,30 +227,23 @@ class ModelScopeModelLoader(BaseModelLoader):
         # 5. Default to fp32 for unknown models to ensure precision
         # Most embedding models benefit from higher precision
         return torch.float32
-    
-    def _map_model_name_to_modelscope(self, model_name: str) -> str:
-        """
-        Map common model names to ModelScope equivalents.
-        
-        Args:
-            model_name: Original model name
-            
-        Returns:
-            ModelScope model ID
-        """
-        # Use default mapping
-        return self._default_model_mappings.get(model_name, model_name)
-    
+     
     def is_model_available(self) -> bool:
-        """
-        Check if the model is available locally.
-        
-        Returns:
-            True if model is available locally, False otherwise
-        """
-        # For ModelScope, we rely on the pipeline to handle availability
-        # This is a simplified check - in practice, ModelScope handles caching
-        return True
+       """
+       Check if the model is available locally.
+       
+       Returns:
+           True if model is available locally, False otherwise
+       """
+       # Check if model_path is provided and exists
+       if self.model_path and os.path.exists(self.model_path):
+           # Check for required model files
+           required_files = ["config.json", "pytorch_model.bin", "tokenizer.json", "tokenizer_config.json"]
+           return all(os.path.exists(os.path.join(self.model_path, f)) for f in required_files)
+       
+       # For ModelScope models, we can't reliably check availability in offline mode
+       # So we return True to allow the model loading to proceed and fail gracefully if needed
+       return True
     
     def get_model_info(self) -> Dict[str, Any]:
         """
@@ -286,7 +272,7 @@ class ModelScopeModelLoader(BaseModelLoader):
             "modelscope_model_name": self.modelscope_model_name,
             "max_context_length": config.max_context_length,
             "embedding_dimension": config.embedding_dimension,
-            "cache_dir": self.modelscope_cache_dir,
+            # Note: cache_dir is no longer included as it's managed by the model libraries
             "source": "modelscope" if not self.model_path else "local",
             "pipeline_type": "sentence_embedding",
         }
