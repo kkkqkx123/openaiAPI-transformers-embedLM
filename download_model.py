@@ -1,31 +1,34 @@
 #!/usr/bin/env python3
 """
-下载模型的脚本
+下载模型的脚本（修正版）
 """
 
 from transformers import AutoTokenizer, AutoModel
 import os
 
 def download_model():
-    # model_name = "sentence-transformers/all-MiniLM-L12-v2"
-    # model_path = "D:\\models\\all-MiniLM-L12-v2"
-    model_name = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-    model_path = "D:\\models\\multilingual-MiniLM-L12-v2"
+    model_name = "jinaai/jina-embeddings-v2-base-code"
+    model_path = "D:\\models\\jina-embeddings-v2-base-code"
     
     print(f"正在下载模型 {model_name} 到 {model_path}")
     
-    # 创建目录
     os.makedirs(model_path, exist_ok=True)
     
     try:
-        # 下载tokenizer
+        # 下载tokenizer（加 trust_remote_code 更稳妥，部分 Jina Tokenizer 也需远程配置）
         print("下载tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=True  # 新增：加载 Jina 自定义 Tokenizer 配置（若有）
+        )
         tokenizer.save_pretrained(model_path)
         
-        # 下载模型
+        # 下载模型（必须加 trust_remote_code，加载自定义架构）
         print("下载模型...")
-        model = AutoModel.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(
+            model_name,
+            trust_remote_code=True  # 核心：加载 JinaBertModel 自定义架构代码
+        )
         model.save_pretrained(model_path)
         
         print(f"模型下载完成，保存在: {model_path}")
