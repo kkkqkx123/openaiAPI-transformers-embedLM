@@ -5,7 +5,6 @@ This module provides functionality to load and manage embedding models,
 including local loading and downloading from Hugging Face Hub.
 """
 
-import os
 import pickle
 from pathlib import Path
 from typing import List, Optional, Union

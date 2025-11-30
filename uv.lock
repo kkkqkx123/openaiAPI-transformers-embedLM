@@ -243,6 +243,7 @@ dependencies = [
     { name = "apscheduler" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "modelscope" },
     { name = "mypy" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.11'" },
@@ -273,6 +274,7 @@ requires-dist = [
     { name = "flake8", marker = "extra == 'dev'" },
     { name = "httpx" },
     { name = "isort", marker = "extra == 'dev'" },
+    { name = "modelscope", specifier = ">=1.32.0" },
     { name = "mypy" },
     { name = "numpy", specifier = ">=2.2.0" },
     { name = "psutil" },
@@ -562,6 +564,22 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/e7/ff/0ffefdcac38932a54d2b5eed4e0ba8a408f215002cd178ad1df0f2806ff8/mccabe-0.7.0.tar.gz", hash = "sha256:348e0240c33b60bbdf4e523192ef919f28cb2c3d7d5c7794f74009290f236325" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/27/1a/1f68f9ba0c207934b35b86a8ca3aad8395a3d6dd7921c0686e23853ff5a9/mccabe-0.7.0-py2.py3-none-any.whl", hash = "sha256:6c2d30ab6be0e4a46919781807b4f0d834ebdd6c6e3dca0bda5a15f863427b6e" },
+]
+
+[[package]]
+name = "modelscope"
+version = "1.32.0"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "filelock" },
+    { name = "requests" },
+    { name = "setuptools" },
+    { name = "tqdm" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/6d/4d/a0961c29177906dff58de5c328a0b183ca8ebf33961fe5a91ddbfd4fae9c/modelscope-1.32.0.tar.gz", hash = "sha256:b717c11cef11c57d1d47b69da06f5888e634925e72de9adc3ccb1d29c74c9821" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/64/92/b24fd3d91d87bf2189a422d6acea736505616b54706eadf141d2298c7a1b/modelscope-1.32.0-py3-none-any.whl", hash = "sha256:b47711464766ac626b1ad72772619f05881deeeefdfc7c0b6495d4463963e24e" },
 ]
 
 [[package]]
