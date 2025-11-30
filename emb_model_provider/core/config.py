@@ -598,7 +598,6 @@ class Config(BaseSettings):
                             "path": "",
                             "source": self.model_source,  # 使用全局配置
                             "precision": self.get_precision_for_model(model_config),
-                            "cache_dir": None,
                             "trust_remote_code": False
                         }
                     elif isinstance(model_config, dict):
@@ -611,7 +610,6 @@ class Config(BaseSettings):
                         model_config.setdefault("path", "")
                         model_config.setdefault("source", self.model_source)
                         model_config.setdefault("precision", self.get_precision_for_model(model_config["name"]))
-                        model_config.setdefault("cache_dir", None)
                         model_config.setdefault("trust_remote_code", False)
                         model_config.setdefault("revision", "main")
                         model_config.setdefault("fallback_to_huggingface", True)
@@ -649,7 +647,6 @@ class Config(BaseSettings):
                 "path": model_config.get("path", self.model_path),
                 "source": model_config.get("source", self.model_source),
                 "precision": model_config.get("precision", self.get_precision_for_model(model_config.get("name", alias))),
-                "cache_dir": model_config.get("cache_dir", None),
                 "trust_remote_code": model_config.get("trust_remote_code", False),
                 "revision": model_config.get("revision", "main"),
                 "fallback_to_huggingface": model_config.get("fallback_to_huggingface", True),
@@ -663,7 +660,6 @@ class Config(BaseSettings):
                 "path": self.model_path,
                 "source": self.model_source,
                 "precision": self.model_precision,
-                "cache_dir": None,
                 "trust_remote_code": False,
                 "revision": "main",
                 "fallback_to_huggingface": True,
