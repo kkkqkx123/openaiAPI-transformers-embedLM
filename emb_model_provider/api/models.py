@@ -38,16 +38,19 @@ async def list_models() -> ModelsResponse:
     
     # 添加映射的模型和别名
     model_mapping = config.get_model_mapping()
-    for alias, actual_model in model_mapping.items():
+    for alias, model_config in model_mapping.items():
+        # 获取实际模型名称（从配置字典中）
+        actual_model_name = model_config.get("name", alias)
+        
         # 添加别名
         model_info_list.append(ModelInfo(
             id=alias,
             owned_by="organization-owner"
         ))
         # 添加实际模型（如果尚未添加）
-        if actual_model != config.model_name and actual_model not in [m.id for m in model_info_list]:
+        if actual_model_name != config.model_name and actual_model_name not in [m.id for m in model_info_list]:
             model_info_list.append(ModelInfo(
-                id=actual_model,
+                id=actual_model_name,
                 owned_by="organization-owner"
             ))
     

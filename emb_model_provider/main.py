@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from emb_model_provider.core.config import config
@@ -16,6 +17,25 @@ setup_logging()
 atexit.register(shutdown_logging)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    应用的启动和关闭生命周期管理
+    """
+    # 启动时执行（可以添加初始化逻辑）
+    yield
+    
+    # 关闭时执行清理工作
+    from emb_model_provider.api.embeddings import get_realtime_batch_processor
+    try:
+        batch_processor = get_realtime_batch_processor()
+        if batch_processor:
+            await batch_processor.stop()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error during shutdown: {e}")
+
+
 # 创建FastAPI应用实例
 app = FastAPI(
     title="Embedding Model Provider API",
@@ -23,7 +43,8 @@ app = FastAPI(
     version="0.1.0",
     openapi_url="/openapi.json",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 
@@ -67,21 +88,6 @@ async def root() -> dict:
         "version": "0.1.0",
         "endpoints": ["/v1/embeddings", "/v1/models", "/health"]
     }
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    """
-    应用关闭时的清理工作
-    """
-    from emb_model_provider.api.embeddings import get_realtime_batch_processor
-    try:
-        batch_processor = get_realtime_batch_processor()
-        if batch_processor:
-            await batch_processor.stop()
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Error during shutdown: {e}")
 
 
 def run_server() -> None:

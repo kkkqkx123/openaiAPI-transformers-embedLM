@@ -607,6 +607,9 @@ class Config(BaseSettings):
                             continue
                         
                         # 设置默认值
+                        # 如果配置中有model_path字段，映射到path字段
+                        if "model_path" in model_config:
+                            model_config["path"] = model_config["model_path"]
                         model_config.setdefault("path", "")
                         model_config.setdefault("source", self.model_source)
                         model_config.setdefault("precision", self.get_precision_for_model(model_config["name"]))

@@ -6,6 +6,7 @@ based on size and time, as well as automatic cleanup of old logs.
 """
 
 import os
+import sys
 import gzip
 import shutil
 import logging
@@ -147,6 +148,7 @@ class LogManager:
         Start the background scheduler for periodic log cleanup.
         """
         if self._scheduler is None:
+            # Configure the scheduler to use a safe logger that won't cause I/O errors
             self._scheduler = BackgroundScheduler()
             self._scheduler.add_job(
                 func=self._cleanup_logs,
@@ -260,12 +262,12 @@ class LogManager:
         Returns:
             logging.Logger: Logger instance for cleanup operations
         """
-        # Create a simple file logger for cleanup operations
+        # Create a simple console-only logger for cleanup operations
         cleanup_logger = logging.getLogger('emb_model_provider.cleanup')
         
-        # If no handlers exist, create a simple console handler
+        # If no handlers exist, create a console-only handler
         if not cleanup_logger.handlers:
-            handler = logging.StreamHandler()
+            handler = logging.StreamHandler(sys.stdout)
             handler.setFormatter(logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             ))
@@ -290,16 +292,36 @@ class LogManager:
         """
         Shutdown the log manager.
         
-        Stops the cleanup scheduler and closes all file handlers.
+        Closes all file handlers first, then stops the cleanup scheduler.
         """
-        if self._scheduler and self._scheduler.running:
-            self._scheduler.shutdown()
-        
-        # Close all handlers
+        # Close all handlers first
         for handler in self._handlers.values():
             handler.close()
         
         self._handlers.clear()
+        
+        # Stop the scheduler after handlers are closed to avoid I/O errors
+        if self._scheduler and self._scheduler.running:
+            try:
+                # Completely disable scheduler logging by setting a null handler
+                scheduler_logger = logging.getLogger('apscheduler')
+                scheduler_logger.handlers.clear()
+                null_handler = logging.NullHandler()
+                scheduler_logger.addHandler(null_handler)
+                scheduler_logger.setLevel(logging.CRITICAL + 1)  # Above highest level
+                
+                # Also disable specific scheduler logger
+                specific_logger = logging.getLogger('apscheduler.scheduler')
+                specific_logger.handlers.clear()
+                specific_logger.addHandler(null_handler)
+                specific_logger.setLevel(logging.CRITICAL + 1)
+                
+                self._scheduler.shutdown(wait=False)  # Don't wait for graceful shutdown
+                
+            except Exception:
+                # Suppress any errors during scheduler shutdown to prevent I/O errors
+                pass
+        
         self._initialized = False
 
 
