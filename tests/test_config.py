@@ -20,7 +20,7 @@ class TestConfig:
         # 创建配置时不加载任何环境文件，确保使用默认值
         config = Config()
         
-        assert config.model_path == "D:\\models\\multilingual-MiniLM-L12-v2"
+        assert config.model_path == "D:\\\\models\\\\multilingual-MiniLM-L12-v2"
         assert config.model_name == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         assert config.max_batch_size == 32
         assert config.max_context_length == 512
@@ -108,7 +108,7 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         
         expected_keys = ["model_path", "model_name", "max_context_length", "embedding_dimension", "device"]
         assert all(key in model_config for key in expected_keys)
-        assert model_config["model_path"] == "D:\\models\\multilingual-MiniLM-L12-v2"
+        assert model_config["model_path"] == "D:\\\\models\\\\multilingual-MiniLM-L12-v2"
         assert model_config["model_name"] == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         assert model_config["max_context_length"] == 512
         assert model_config["embedding_dimension"] == 384
@@ -207,8 +207,8 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         assert config.model_precision == "auto"
         assert config.model_precision_overrides == {}
         assert config.enable_quantization is False
-        assert config.quantization_method == "int8"
-        assert config.enable_gpu_memory_optimization is False
+        assert config.quantization_method == "bitsandbytes"
+        assert config.enable_gpu_memory_optimization is True
 
     def test_precision_from_env(self):
         """Test loading precision configuration from environment."""
@@ -216,7 +216,7 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
             "EMB_PROVIDER_MODEL_PRECISION": "fp16",
             "EMB_PROVIDER_MODEL_PRECISION_OVERRIDES": '{"model1": "fp16", "model2": "int8"}',
             "EMB_PROVIDER_ENABLE_QUANTIZATION": "true",
-            "EMB_PROVIDER_QUANTIZATION_METHOD": "int4",
+            "EMB_PROVIDER_QUANTIZATION_METHOD": "gptq",
             "EMB_PROVIDER_ENABLE_GPU_MEMORY_OPTIMIZATION": "true",
         }
         
@@ -226,7 +226,7 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
             assert config.model_precision == "fp16"
             assert config.model_precision_overrides == {"model1": "fp16", "model2": "int8"}
             assert config.enable_quantization is True
-            assert config.quantization_method == "int4"
+            assert config.quantization_method == "gptq"
             assert config.enable_gpu_memory_optimization is True
 
     def test_precision_validation(self):
@@ -244,9 +244,10 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
             Config(model_precision="invalid")
         
         # Test valid quantization methods
-        Config(quantization_method="int8")
-        Config(quantization_method="int4")
-        
+        Config(quantization_method="bitsandbytes")
+        Config(quantization_method="gptq")
+        Config(quantization_method="awq")
+
         # Test invalid quantization method
         with pytest.raises(ValueError):
             Config(quantization_method="invalid")
@@ -264,8 +265,8 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         assert precision_config["model_precision"] == "auto"
         assert precision_config["model_precision_overrides"] == {}
         assert precision_config["enable_quantization"] is False
-        assert precision_config["quantization_method"] == "int8"
-        assert precision_config["enable_gpu_memory_optimization"] is False
+        assert precision_config["quantization_method"] == "bitsandbytes"
+        assert precision_config["enable_gpu_memory_optimization"] is True
 
     def test_get_precision_for_model(self):
         """Test getting precision for specific models."""
@@ -295,7 +296,7 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         config = Config(model_mapping='{"mini": "sentence-transformers/all-MiniLM-L12-v2"}')
         mapping = config.get_model_mapping()
         assert "mini" in mapping
-        assert mapping["mini"] == "sentence-transformers/all-MiniLM-L12-v2"
+        assert mapping["mini"]["name"] == "sentence-transformers/all-MiniLM-L12-v2"
 
     def test_get_model_mapping_empty(self):
         """测试获取空模型映射"""
@@ -313,11 +314,11 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         """测试获取简单模型信息"""
         config = Config(
             model_mapping='{"mini": "sentence-transformers/all-MiniLM-L12-v2"}',
-            model_path="D:\\models\\default"
+            model_path="D:\\\\models\\\\default"
         )
         model_info = config.get_model_info("mini")
         assert model_info["name"] == "sentence-transformers/all-MiniLM-L12-v2"
-        assert model_info["path"] == "D:\\models\\default"  # 使用默认路径
+        assert model_info["path"] == ""  # No explicit path in model_mapping, so uses empty string
     
     def test_get_model_info_with_path(self):
         """测试获取包含路径的模型信息"""

@@ -47,12 +47,23 @@ class TestModelManager:
     @patch('emb_model_provider.core.model_manager.config')
     def test_init_with_defaults(self, mock_config):
         """Test ModelManager initialization with default values."""
-        mock_config.model_path = self.model_path
-        mock_config.model_name = self.model_name
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
         mock_config.device = "auto"
-        
-        manager = ModelManager()
-        
+        mock_config.model_name = self.model_name
+
+        manager = ModelManager(model_alias=self.model_name)
+
         assert manager.model_path == self.model_path
         assert manager.model_name == self.model_name
         assert not manager._model_loaded
@@ -73,106 +84,213 @@ class TestModelManager:
     @patch('emb_model_provider.core.model_manager.config')
     def test_device_property(self, mock_config):
         """Test device property is set correctly."""
-        mock_config.model_path = self.model_path
-        mock_config.model_name = self.model_name
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
         mock_config.device = "cpu"
-        
-        manager = ModelManager()
-        
+        mock_config.model_name = self.model_name
+
+        manager = ModelManager(model_alias=self.model_name)
+
         assert manager.device == "cpu"
     
     @patch('emb_model_provider.core.model_manager.config')
     def test_is_loaded_property(self, mock_config):
         """Test is_loaded property."""
-        mock_config.model_path = self.model_path
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
         mock_config.model_name = self.model_name
-        
-        manager = ModelManager()
-        
+
+        manager = ModelManager(model_alias=self.model_name)
+
         assert manager.is_loaded is False
-        
+
         manager._model_loaded = True
         assert manager.is_loaded is True
     
-    @patch.object(ModelManager, '_load_local_model')
-    @patch.object(ModelManager, '_download_model')
-    @patch.object(ModelManager, '_is_model_available_locally')
+    @patch.object(ModelManager, '_create_loader')
     @patch('emb_model_provider.core.model_manager.config')
-    def test_load_model_local_available(self, mock_config, mock_is_available, mock_download, mock_load_local):
+    def test_load_model_local_available(self, mock_config, mock_create_loader):
         """Test loading model when it's available locally."""
-        mock_config.model_path = self.model_path
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
+        mock_config.device = "cpu"
         mock_config.model_name = self.model_name
-        mock_is_available.return_value = True
-        
-        manager = ModelManager()
+        mock_config.enable_offline_mode = False
+        mock_config.enable_path_priority = True
+
+        # Create mock loader
+        mock_loader = MagicMock()
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+        mock_loader.load_model.return_value = (mock_model, mock_tokenizer)
+
+        mock_create_loader.return_value = mock_loader
+
+        manager = ModelManager(model_alias=self.model_name)
         manager.load_model()
-        
-        mock_is_available.assert_called_once()
-        mock_load_local.assert_called_once()
-        mock_download.assert_not_called()
+
+        # Check that the loader was created and used to load the model
+        mock_create_loader.assert_called_once()
+        mock_loader.load_model.assert_called_once()
+        assert manager._model_loaded is True
+        assert manager._model is mock_model
+        assert manager._tokenizer is mock_tokenizer
     
-    @patch.object(ModelManager, '_load_local_model')
-    @patch.object(ModelManager, '_download_model')
-    @patch.object(ModelManager, '_is_model_available_locally')
+    @patch.object(ModelManager, '_create_loader')
     @patch('emb_model_provider.core.model_manager.config')
-    def test_load_model_download_required(self, mock_config, mock_is_available, mock_download, mock_load_local):
+    def test_load_model_download_required(self, mock_config, mock_create_loader):
         """Test loading model when download is required."""
-        mock_config.model_path = self.model_path
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
+        mock_config.device = "cpu"
         mock_config.model_name = self.model_name
-        mock_is_available.return_value = False
-        
-        manager = ModelManager()
+        mock_config.enable_offline_mode = False
+        mock_config.enable_path_priority = True
+
+        # Create mock loader
+        mock_loader = MagicMock()
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+        mock_loader.load_model.return_value = (mock_model, mock_tokenizer)
+
+        mock_create_loader.return_value = mock_loader
+
+        manager = ModelManager(model_alias=self.model_name)
         manager.load_model()
-        
-        mock_is_available.assert_called_once()
-        mock_download.assert_called_once()
-        mock_load_local.assert_called_once()
+
+        # Check that the loader was created and used to load the model
+        mock_create_loader.assert_called_once()
+        mock_loader.load_model.assert_called_once()
+        assert manager._model_loaded is True
+        assert manager._model is mock_model
+        assert manager._tokenizer is mock_tokenizer
     
-    @patch.object(ModelManager, '_load_local_model')
-    @patch.object(ModelManager, '_is_model_available_locally')
+    @patch.object(ModelManager, '_create_loader')
     @patch('emb_model_provider.core.model_manager.config')
-    def test_load_model_already_loaded(self, mock_config, mock_is_available, mock_load_local):
+    def test_load_model_already_loaded(self, mock_config, mock_create_loader):
         """Test loading model when it's already loaded."""
-        mock_config.model_path = self.model_path
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
+        mock_config.device = "cpu"
         mock_config.model_name = self.model_name
-        
-        manager = ModelManager()
+        mock_config.enable_offline_mode = False
+        mock_config.enable_path_priority = True
+
+        # Create mock loader
+        mock_loader = MagicMock()
+        mock_model = MagicMock()
+        mock_tokenizer = MagicMock()
+        mock_loader.load_model.return_value = (mock_model, mock_tokenizer)
+
+        mock_create_loader.return_value = mock_loader
+
+        manager = ModelManager(model_alias=self.model_name)
         manager._model_loaded = True
+        # Call load_model again - it should not try to load again
         manager.load_model()
-        
-        mock_is_available.assert_not_called()
-        mock_load_local.assert_not_called()
+
+        # Since model is already loaded, create_loader should not be called again
+        mock_create_loader.assert_not_called()
+        assert manager._model_loaded is True
     
     @patch.object(ModelManager, '_mean_pooling')
     @patch.object(ModelManager, '_tokenize_inputs')
     @patch('emb_model_provider.core.model_manager.config')
     def test_generate_embeddings_single_input(self, mock_config, mock_tokenize, mock_mean_pooling):
         """Test generating embeddings for a single input."""
-        mock_config.model_path = self.model_path
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
         mock_config.model_name = self.model_name
         mock_config.max_batch_size = 32
-        
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        mock_config.device = "cpu"  # Use CPU for testing
+
         # Set up mock model and tokenizer
-        manager = ModelManager()
+        manager = ModelManager(model_alias=self.model_name)
         manager._model_loaded = True
         manager._model = MagicMock()
         manager._tokenizer = MagicMock()
-        
+
         # Mock tokenization
         mock_tokenized = {
             "input_ids": torch.tensor([[1, 2, 3]]),
             "attention_mask": torch.tensor([[1, 1, 1]])
         }
         mock_tokenize.return_value = mock_tokenized
-        
+
         # Mock model output and pooling
-        mock_model_output = [torch.tensor([[[0.1, 0.2, 0.3]]])]
+        class MockOutput:
+            def __init__(self):
+                self.last_hidden_state = torch.tensor([[[0.1, 0.2, 0.3]]])
+
+        mock_model_output = MockOutput()
         manager._model.return_value = mock_model_output
         mock_mean_pooling.return_value = torch.tensor([[0.1, 0.2, 0.3]])
-        
+
         # Generate embeddings
         result = manager.generate_embeddings("test input")
-        
+
         assert isinstance(result, list)
         assert len(result) == 1
         assert isinstance(result[0], list)
@@ -183,31 +301,49 @@ class TestModelManager:
     @patch('emb_model_provider.core.model_manager.config')
     def test_generate_embeddings_multiple_inputs(self, mock_config, mock_tokenize, mock_mean_pooling):
         """Test generating embeddings for multiple inputs."""
-        mock_config.model_path = self.model_path
+        # Setup config mock for get_model_info
+        mock_model_config = {
+            "name": self.model_name,
+            "path": self.model_path,
+            "source": "transformers",
+            "precision": "auto",
+            "trust_remote_code": False,
+            "revision": "main",
+            "fallback_to_huggingface": True,
+            "load_from_transformers": False
+        }
+        mock_config.get_model_info.return_value = mock_model_config
         mock_config.model_name = self.model_name
         mock_config.max_batch_size = 32
-        
+        mock_config.max_context_length = 512
+        mock_config.embedding_dimension = 384
+        mock_config.device = "cpu"  # Use CPU for testing
+
         # Set up mock model and tokenizer
-        manager = ModelManager()
+        manager = ModelManager(model_alias=self.model_name)
         manager._model_loaded = True
         manager._model = MagicMock()
         manager._tokenizer = MagicMock()
-        
+
         # Mock tokenization
         mock_tokenized = {
             "input_ids": torch.tensor([[1, 2, 3], [4, 5, 6]]),
             "attention_mask": torch.tensor([[1, 1, 1], [1, 1, 1]])
         }
         mock_tokenize.return_value = mock_tokenized
-        
+
         # Mock model output and pooling
-        mock_model_output = [torch.tensor([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]])]
+        class MockOutput:
+            def __init__(self):
+                self.last_hidden_state = torch.tensor([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]])
+
+        mock_model_output = MockOutput()
         manager._model.return_value = mock_model_output
         mock_mean_pooling.return_value = torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
-        
+
         # Generate embeddings
         result = manager.generate_embeddings(["input 1", "input 2"])
-        
+
         assert isinstance(result, list)
         assert len(result) == 2
         assert all(isinstance(emb, list) for emb in result)

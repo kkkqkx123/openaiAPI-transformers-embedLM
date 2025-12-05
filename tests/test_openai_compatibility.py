@@ -24,7 +24,7 @@ class TestOpenAICompatibility:
         # 模拟 OpenAI Python 客户端的请求格式
         openai_format_request = {
             "input": "Test compatibility with OpenAI Python client",
-            "model": config.model_name,
+            "model": "default",
             "encoding_format": "float",
             "user": "test-user-123"
         }
@@ -42,7 +42,7 @@ class TestOpenAICompatibility:
         assert "usage" in data
         
         assert data["object"] == "list"
-        assert data["model"] == config.model_name
+        assert data["model"] == "default"
         
         # 验证数据对象格式
         assert isinstance(data["data"], list)

@@ -13,7 +13,7 @@ class TestEmbeddingService:
     def setup_method(self):
         """设置测试环境"""
         self.config = Config()
-        
+
         # Mock tokenizer manager
         with patch('emb_model_provider.services.embedding_service.initialize_tokenizer_manager') as mock_init_tokenizer_manager:
             # Create a mock tokenizer manager
@@ -28,18 +28,18 @@ class TestEmbeddingService:
             # Make the tokenizer manager return the mock tokenizer
             mock_tokenizer_manager.get_tokenizer.return_value = mock_tokenizer
             mock_init_tokenizer_manager.return_value = mock_tokenizer_manager
-            
+
             # Mock模型
-            with patch('emb_model_provider.core.model_manager.ModelManager') as mock_model_manager:
+            with patch('emb_model_provider.core.model_manager.get_model_manager') as mock_get_model_manager:
                 mock_model_manager_instance = Mock()
                 mock_model_manager_instance.model = Mock()
-                
+                mock_model_manager_instance.is_model_loaded.return_value = True
+
                 # Mock model output
                 mock_model_output = Mock()
                 mock_model_output.last_hidden_state = torch.randn(1, 5, 384)  # 模拟模型输出
-                mock_model_manager_instance.model.return_value = mock_model_output
-                
-                mock_model_manager.return_value = mock_model_manager_instance
+                mock_get_model_manager.return_value = mock_model_manager_instance
+
                 self.service = EmbeddingService(self.config)
                 # Store reference to mock tokenizer for tests
                 self.mock_tokenizer = mock_tokenizer
@@ -92,28 +92,44 @@ class TestEmbeddingService:
             input=long_text,
             model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         )
-        
+
         # 修改tokenizer的encode方法返回长序列
-        tokenizer = self.service.get_tokenizer()
+        tokenizer = self.service.get_tokenizer(request.model)
         tokenizer.encode = Mock(return_value=list(range(self.config.max_context_length + 10)))
-        
+
         with pytest.raises(ContextLengthExceededError):
             self.service.validate_request(request)
     
     def test_count_tokens_single_string(self):
         """测试单个字符串的token计数"""
-        # Mock tokenizer的encode方法
-        self.mock_tokenizer.encode = Mock(return_value=[1, 2, 3, 4, 5])
-        
-        tokens_count = self.service.count_tokens("Hello world")
+        model_alias = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+        # Mock tokenizer manager for the specific model
+        mock_tokenizer_manager = Mock()
+        mock_tokenizer = Mock()
+        mock_tokenizer.encode.return_value = [1, 2, 3, 4, 5]  # 模拟编码结果为5个token
+        mock_tokenizer_manager.get_tokenizer.return_value = mock_tokenizer
+
+        # Replace the tokenizer manager for this specific test
+        self.service.tokenizer_managers[model_alias] = mock_tokenizer_manager
+
+        tokens_count = self.service.count_tokens("Hello world", model_alias)
         assert tokens_count == 5
         
     def test_count_tokens_list_of_strings(self):
         """测试字符串列表的token计数"""
-        # Mock tokenizer的encode方法
-        self.mock_tokenizer.encode = Mock(return_value=[1, 2, 3])
-        
-        tokens_count = self.service.count_tokens(["Hello", "world"])
+        model_alias = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+        # Mock tokenizer manager for the specific model
+        mock_tokenizer_manager = Mock()
+        mock_tokenizer = Mock()
+        mock_tokenizer.encode.return_value = [1, 2, 3]  # 模拟编码结果为3个token
+        mock_tokenizer_manager.get_tokenizer.return_value = mock_tokenizer
+
+        # Replace the tokenizer manager for this specific test
+        self.service.tokenizer_managers[model_alias] = mock_tokenizer_manager
+
+        tokens_count = self.service.count_tokens(["Hello", "world"], model_alias)
         # 每个字符串都编码为3个token，总共2个字符串
         assert tokens_count == 6
     
@@ -135,22 +151,24 @@ class TestEmbeddingService:
     def test_process_embedding_request(self):
         """测试处理嵌入请求的完整流程"""
         # Mock必要的方法
-        self.service.validate_request = Mock()
-        self.service.generate_embeddings = Mock(return_value=[])
-        self.service.create_embedding_response = Mock()
-        
-        request = EmbeddingRequest(
-            input="Hello world",
-            model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-        )
-        
-        # 调用方法
-        self.service.process_embedding_request(request)
-        
-        # 验证方法被调用
-        self.service.validate_request.assert_called_once_with(request)
-        self.service.generate_embeddings.assert_called_once()
-        self.service.create_embedding_response.assert_called_once()
+        with patch.object(self.service, 'count_tokens', return_value=5):
+            self.service.validate_request = Mock()
+            self.service.generate_embeddings = Mock(return_value=[])
+            self.service.create_embedding_response = Mock()
+
+            request = EmbeddingRequest(
+                input="Hello world",
+                model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            )
+
+            # 调用方法
+            self.service.process_embedding_request(request)
+
+            # 验证方法被调用
+            self.service.validate_request.assert_called_once_with(request)
+            # Note: Need to account for model parameter
+            self.service.generate_embeddings.assert_called_once()
+            self.service.create_embedding_response.assert_called_once()
 
 
 if __name__ == "__main__":

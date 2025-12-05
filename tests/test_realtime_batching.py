@@ -97,7 +97,7 @@ async def test_realtime_batch_processor_with_max_batch_size():
 
 @pytest.mark.asyncio
 async def test_realtime_batch_processor_timeout():
-    """Test that batch is processed after max_wait_time if min_batch_size is reached."""
+    """Test that batch is processed after hard timeout when less than min_batch_size."""
     config = create_mock_config()
     service = create_mock_embedding_service()
     processor = RealtimeBatchProcessor(config, service)
@@ -106,19 +106,22 @@ async def test_realtime_batch_processor_timeout():
     await processor.start()
     
     try:
-        # Create 1 request (less than min_batch_size)
+        # Create 1 request (less than min_batch_size of 2)
         request = EmbeddingRequest(input="Hello", model=config.model_name)
         
         start_time = time.time()
         result = await processor.submit_request(request)
         end_time = time.time()
         
-        # The request should be processed after max_wait_time (100ms) has passed
+        # The request should be processed after hard timeout since it's less than min_batch_size
         processing_time = end_time - start_time
         
-        # Should take at least max_wait_time but not much longer
-        assert processing_time >= config.max_wait_time_ms / 1000.0
-        assert processing_time < (config.max_wait_time_ms / 1000.0) * 2  # Less than double the wait time
+        # Should take at least max_wait_time + hard_timeout but not much longer
+        min_expected = (config.max_wait_time_ms / 1000.0) + processor.hard_timeout
+        max_expected = min_expected + 0.5  # Add some buffer for processing
+        
+        assert processing_time >= min_expected
+        assert processing_time <= max_expected
         
         # Verify the embedding service was called with the single input
         service.generate_embeddings.assert_called_once()

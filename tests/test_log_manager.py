@@ -64,8 +64,8 @@ class TestLogManager:
         self.config.log_file_max_size = 1  # 1MB for testing
         self.config.log_retention_days = 7
         self.config.log_cleanup_interval_hours = 1
-        self.config.log_max_dir_size_mb = 50
-        self.config.log_cleanup_target_size_mb = 20
+        self.config.log_max_dir_size_mb = 5  # Changed from 50 to 5 MB for the test
+        self.config.log_cleanup_target_size_mb = 2
         self.config.log_cleanup_retention_days = "7,3,1"
     
     def teardown_method(self):

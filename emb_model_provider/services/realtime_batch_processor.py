@@ -9,7 +9,6 @@ import asyncio
 import time
 from typing import List, Optional, Any
 from dataclasses import dataclass
-from threading import Lock
 from emb_model_provider.core.logging import get_logger
 from emb_model_provider.core.config import Config
 from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingData
@@ -46,7 +45,7 @@ class RealtimeBatchProcessor:
         
         # Internal request queue
         self._requests: List[BatchRequest] = []
-        self._lock = Lock()
+        self._lock = asyncio.Lock()
         self._stop_event = asyncio.Event()
         
         # Event to signal when new requests arrive
@@ -54,6 +53,9 @@ class RealtimeBatchProcessor:
         
         # Background task for processing
         self._background_task: Optional[asyncio.Task[None]] = None
+        
+        # Maximum queue size to prevent memory leaks
+        self._max_queue_size = config.max_batch_size * 10  # Allow some backlog but prevent unlimited growth
         
         logger.info(
             f"RealtimeBatchProcessor initialized: "
@@ -83,45 +85,56 @@ class RealtimeBatchProcessor:
         )
         
         # Add to the internal queue
-        with self._lock:
+        async with self._lock:
+            # Check queue size to prevent memory leaks
+            if len(self._requests) >= self._max_queue_size:
+                future.set_exception(Exception("Request queue is full, please try again later"))
+                return await future
+            
             self._requests.append(batch_request)
-            should_process = self._should_process_now()
+            current_size = len(self._requests)
         
-        logger.debug(f"Request submitted, queue size: {len(self._requests)}, should_process_now: {should_process}")
+        # Check if we should process immediately (outside of lock to avoid deadlock)
+        should_process = (
+            current_size >= self.max_batch_size or
+            (current_size >= self.min_batch_size and self._has_request_waited_too_long())
+        )
+        
+        logger.debug(f"Request submitted, queue size: {current_size}, should_process_now: {should_process}")
         
         # Signal that requests are available
         self._requests_available_event.set()
         
         # Process immediately if conditions are met
         if should_process:
-            await self._process_batch()
+            # Use create_task to avoid blocking the submit_request call
+            asyncio.create_task(self._process_batch())
         
-        return await future
+        try:
+            return await future
+        except Exception:
+            # If the future is cancelled or fails, ensure it's removed from the queue
+            async with self._lock:
+                if batch_request in self._requests:
+                    self._requests.remove(batch_request)
+            raise
     
-    def _should_process_now(self) -> bool:
+    def _has_request_waited_too_long(self) -> bool:
         """
-        Determine if we should process the batch immediately.
+        Check if any request has waited longer than max_wait_time.
+        This method is called outside of lock to avoid deadlock.
         
         Returns:
-            True if batch should be processed immediately
+            True if any request has waited too long
         """
-        with self._lock:
-            current_size = len(self._requests)
-        
-        # Process immediately if we've reached max batch size
-        if current_size >= self.max_batch_size:
-            return True
+        # Get a snapshot of requests to check timestamps
+        # This is a best-effort check without locking
+        if not self._requests:
+            return False
             
-        # Process immediately if we've reached min batch size and max wait time is exceeded
-        # (for requests that have been waiting)
-        with self._lock:
-            if current_size >= self.min_batch_size and self._requests:
-                oldest_timestamp = min(req.timestamp for req in self._requests)
-                wait_time = time.time() - oldest_timestamp
-                if wait_time >= self.max_wait_time:
-                    return True
-        
-        return False
+        oldest_timestamp = min(req.timestamp for req in self._requests)
+        wait_time = time.time() - oldest_timestamp
+        return wait_time >= self.max_wait_time
     
     async def _process_batch(self) -> None:
         """
@@ -129,7 +142,7 @@ class RealtimeBatchProcessor:
         """
         # Get pending requests
         requests_to_process = None
-        with self._lock:
+        async with self._lock:
             if self._requests:
                 requests_to_process = self._requests[:]
                 self._requests.clear()
@@ -153,6 +166,11 @@ class RealtimeBatchProcessor:
             # Distribute results back to individual requests
             idx = 0
             for batch_req in requests_to_process:
+                if batch_req.future.done():
+                    # Skip if future is already cancelled or done
+                    idx += 1 if not isinstance(batch_req.request.input, list) else len(batch_req.request.input)
+                    continue
+                    
                 inputs_count = 1 if not isinstance(batch_req.request.input, list) else len(batch_req.request.input)
                 request_results = embedding_data_list[idx:idx + inputs_count]
                 
@@ -165,9 +183,10 @@ class RealtimeBatchProcessor:
                 
         except Exception as e:
             logger.error(f"Batch processing failed: {e}")
-            # Set exception for all requests in the batch
+            # Set exception for all requests in the batch that aren't already done
             for batch_req in requests_to_process:
-                batch_req.future.set_exception(e)
+                if not batch_req.future.done():
+                    batch_req.future.set_exception(e)
     
     async def _process_loop(self) -> None:
         """
@@ -178,9 +197,9 @@ class RealtimeBatchProcessor:
             try:
                 # Wait for either new requests or the timeout, whichever comes first
                 # Calculate next timeout based on existing requests
-                sleep_time = 0.01  # Default sleep time if no requests are pending
+                sleep_time = 0.1  # Default sleep time if no requests are pending (increased from 0.01)
                 
-                with self._lock:
+                async with self._lock:
                     if self._requests:
                         # Calculate the time when the oldest request will reach max_wait_time
                         oldest_timestamp = min(req.timestamp for req in self._requests)
@@ -189,8 +208,13 @@ class RealtimeBatchProcessor:
                         # Calculate the time when the oldest request will reach hard_timeout
                         time_to_hard_timeout = (self.max_wait_time + self.hard_timeout) - (time.time() - oldest_timestamp)
                         
-                        # Use the shorter of the two as the sleep time
-                        sleep_time = min(time_to_max_wait, time_to_hard_timeout, sleep_time)
+                        # Use the appropriate timeout based on conditions
+                        if time_to_max_wait > 0:
+                            sleep_time = min(time_to_max_wait, 0.1)  # Don't sleep too long
+                        elif time_to_hard_timeout > 0:
+                            sleep_time = min(time_to_hard_timeout, 0.1)  # Don't sleep too long
+                        else:
+                            sleep_time = 0.01  # Minimal sleep when both timeouts are exceeded
                         
                         # Ensure sleep_time is positive
                         sleep_time = max(0.01, sleep_time)
@@ -208,31 +232,28 @@ class RealtimeBatchProcessor:
                     pass
                 
                 # Check if we should process based on timeout
-                with self._lock:
+                should_process = False
+                async with self._lock:
                     current_size = len(self._requests)
-                
-                if current_size > 0:
-                    # Check oldest request timestamp
-                    should_process = False
-                    with self._lock:
-                        if self._requests:
-                            oldest_timestamp = min(req.timestamp for req in self._requests)
-                            wait_time = time.time() - oldest_timestamp
-                            
-                            # If the oldest request has waited beyond max_wait_time and we have at least min_batch_size,
-                            # or if we have reached max_batch_size, process immediately
-                            should_process_regular = (
-                                (wait_time >= self.max_wait_time and current_size >= self.min_batch_size) or
-                                current_size >= self.max_batch_size
-                            )
-                            
-                            # Check for hard timeout - this ensures ANY requests are processed after hard_timeout
-                            should_process_hard_timeout = wait_time >= (self.max_wait_time + self.hard_timeout)
-                            
-                            should_process = should_process_regular or should_process_hard_timeout
-                            
-                    if should_process:
-                        await self._process_batch()
+                    
+                    if current_size > 0 and self._requests:
+                        oldest_timestamp = min(req.timestamp for req in self._requests)
+                        wait_time = time.time() - oldest_timestamp
+                        
+                        # If the oldest request has waited beyond max_wait_time and we have at least min_batch_size,
+                        # or if we have reached max_batch_size, process immediately
+                        should_process_regular = (
+                            (wait_time >= self.max_wait_time and current_size >= self.min_batch_size) or
+                            current_size >= self.max_batch_size
+                        )
+                        
+                        # Check for hard timeout - this ensures ANY requests are processed after hard_timeout
+                        should_process_hard_timeout = wait_time >= (self.max_wait_time + self.hard_timeout)
+                        
+                        should_process = should_process_regular or should_process_hard_timeout
+                        
+                if should_process:
+                    await self._process_batch()
                 
             except Exception as e:
                 logger.error(f"Error in batch processing loop: {e}")
@@ -249,10 +270,28 @@ class RealtimeBatchProcessor:
             self._stop_event.set()
             # Wake up the processing loop if it's waiting
             self._requests_available_event.set()
-            await self._background_task
+            
+            # Cancel any pending futures
+            async with self._lock:
+                for batch_req in self._requests:
+                    if not batch_req.future.done():
+                        batch_req.future.cancel()
+                self._requests.clear()
+            
+            # Wait for the background task to finish with timeout
+            try:
+                await asyncio.wait_for(self._background_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Background task did not finish within timeout, cancelling")
+                self._background_task.cancel()
+                try:
+                    await self._background_task
+                except asyncio.CancelledError:
+                    pass
+            
             logger.info("RealtimeBatchProcessor stopped")
     
-    def get_queue_size(self) -> int:
+    async def get_queue_size(self) -> int:
         """Get the current number of pending requests."""
-        with self._lock:
+        async with self._lock:
             return len(self._requests)
