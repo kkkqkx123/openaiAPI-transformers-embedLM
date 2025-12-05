@@ -97,7 +97,7 @@ async def test_realtime_batch_processor_with_max_batch_size():
 
 @pytest.mark.asyncio
 async def test_realtime_batch_processor_timeout():
-    """Test that batch is processed after hard timeout when less than min_batch_size."""
+    """Test that batch is processed with adaptive timeout when less than min_batch_size."""
     config = create_mock_config()
     service = create_mock_embedding_service()
     processor = RealtimeBatchProcessor(config, service)
@@ -113,12 +113,13 @@ async def test_realtime_batch_processor_timeout():
         result = await processor.submit_request(request)
         end_time = time.time()
         
-        # The request should be processed after hard timeout since it's less than min_batch_size
+        # The request should be processed with adaptive timeout (much faster than hard timeout)
         processing_time = end_time - start_time
         
-        # Should take at least max_wait_time + hard_timeout but not much longer
-        min_expected = (config.max_wait_time_ms / 1000.0) + processor.hard_timeout
-        max_expected = min_expected + 0.5  # Add some buffer for processing
+        # With adaptive timeout, single requests should be processed much faster than hard timeout
+        # The optimization reduces single request latency from ~1.1s to ~0.1s
+        min_expected = 0.05  # At least 50ms for processing
+        max_expected = (config.max_wait_time_ms / 1000.0) + 0.05  # max_wait_time + small buffer
         
         assert processing_time >= min_expected
         assert processing_time <= max_expected

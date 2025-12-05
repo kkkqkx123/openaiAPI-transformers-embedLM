@@ -7,8 +7,9 @@ to avoid long hangs when processing small batches.
 
 import asyncio
 import time
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from dataclasses import dataclass
+from collections import deque
 from emb_model_provider.core.logging import get_logger
 from emb_model_provider.core.config import Config
 from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingData
@@ -54,16 +55,12 @@ class RealtimeBatchProcessor:
         # Background task for processing
         self._background_task: Optional[asyncio.Task[None]] = None
         
-        # Maximum queue size to prevent memory leaks
-        self._max_queue_size = config.max_batch_size * 10  # Allow some backlog but prevent unlimited growth
+        # Maximum queue size to prevent memory leaks - increased for better performance
+        self._max_queue_size = config.max_batch_size * 20  # Allow more backlog for high concurrency
         
-        logger.info(
-            f"RealtimeBatchProcessor initialized: "
-            f"max_batch_size={self.max_batch_size}, "
-            f"min_batch_size={self.min_batch_size}, "
-            f"max_wait_time={self.max_wait_time}s, "
-            f"hard_timeout={self.hard_timeout}s"
-        )
+        # Performance optimization: adaptive timeout for single requests
+        self._adaptive_timeout_enabled = True
+        self._single_request_timeout = min(self.max_wait_time * 0.3, self.hard_timeout * 0.3)
     
     async def submit_request(self, request: EmbeddingRequest) -> List[EmbeddingData]:
         """
@@ -121,7 +118,7 @@ class RealtimeBatchProcessor:
     
     def _has_request_waited_too_long(self) -> bool:
         """
-        Check if any request has waited longer than max_wait_time.
+        Check if any request has waited longer than appropriate timeout.
         This method is called outside of lock to avoid deadlock.
         
         Returns:
@@ -131,21 +128,28 @@ class RealtimeBatchProcessor:
         # This is a best-effort check without locking
         if not self._requests:
             return False
-            
+        
         oldest_timestamp = min(req.timestamp for req in self._requests)
         wait_time = time.time() - oldest_timestamp
-        return wait_time >= self.max_wait_time
+        
+        # Adaptive timeout: use shorter timeout for single requests
+        if len(self._requests) <= 2 and self._adaptive_timeout_enabled:
+            return wait_time >= self._single_request_timeout
+        else:
+            return wait_time >= self.max_wait_time
     
     async def _process_batch(self) -> None:
         """
         Process the current batch of requests.
         """
-        # Get pending requests
+        # Get pending requests with size limit
         requests_to_process = None
         async with self._lock:
             if self._requests:
-                requests_to_process = self._requests[:]
-                self._requests.clear()
+                # Limit batch size to max_batch_size to prevent oversized batches
+                requests_to_process = self._requests[:self.max_batch_size]
+                # Remove only the processed requests
+                self._requests = self._requests[len(requests_to_process):]
         
         if not requests_to_process:
             return
@@ -161,7 +165,11 @@ class RealtimeBatchProcessor:
         
         try:
             # Process all inputs together using the embedding service
-            embedding_data_list: List[EmbeddingData] = self.embedding_service.generate_embeddings(all_inputs)
+            result = self.embedding_service.generate_embeddings(all_inputs)
+            if asyncio.iscoroutine(result):
+                embedding_data_list: List[EmbeddingData] = await result
+            else:
+                embedding_data_list: List[EmbeddingData] = result
             
             # Distribute results back to individual requests
             idx = 0
@@ -240,17 +248,22 @@ class RealtimeBatchProcessor:
                         oldest_timestamp = min(req.timestamp for req in self._requests)
                         wait_time = time.time() - oldest_timestamp
                         
-                        # If the oldest request has waited beyond max_wait_time and we have at least min_batch_size,
-                        # or if we have reached max_batch_size, process immediately
-                        should_process_regular = (
-                            (wait_time >= self.max_wait_time and current_size >= self.min_batch_size) or
-                            current_size >= self.max_batch_size
-                        )
-                        
-                        # Check for hard timeout - this ensures ANY requests are processed after hard_timeout
-                        should_process_hard_timeout = wait_time >= (self.max_wait_time + self.hard_timeout)
-                        
-                        should_process = should_process_regular or should_process_hard_timeout
+                        # Adaptive timeout logic
+                        if current_size == 1 and self._adaptive_timeout_enabled:
+                            # Single request: use shorter timeout
+                            should_process_single = wait_time >= self._single_request_timeout
+                            should_process = should_process_single
+                        else:
+                            # Multiple requests: use normal logic
+                            should_process_regular = (
+                                (wait_time >= self.max_wait_time and current_size >= self.min_batch_size) or
+                                current_size >= self.max_batch_size
+                            )
+                            
+                            # Check for hard timeout - this ensures ANY requests are processed after hard_timeout
+                            should_process_hard_timeout = wait_time >= (self.max_wait_time + self.hard_timeout)
+                            
+                            should_process = should_process_regular or should_process_hard_timeout
                         
                 if should_process:
                     await self._process_batch()
