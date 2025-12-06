@@ -2,6 +2,8 @@
 
 ## Build/Test Commands
 
+This project uses uv + venv to manage dependecies. So when you want to use python command, always use `uv run <python command>` instead simple `<python command>`.
+
 ```bash
 # Install all dependencies
 uv sync
@@ -25,7 +27,7 @@ uv run python -m emb_model_provider.main
 ## Architecture & Structure
 
 - **Framework**: FastAPI with asyncio/uvicorn
-- **ML**: PyTorch + Hugging Face transformers (all-MiniLM-L12-v2)
+- **ML**: PyTorch + transformers
 - **Config**: Pydantic BaseSettings with env vars (EMB_PROVIDER_* prefix)
 - **Main package**: `emb_model_provider/`
   - `main.py`: FastAPI app entry point
@@ -38,12 +40,8 @@ uv run python -m emb_model_provider.main
 ## Code Style & Conventions
 
 - **Python version**: 3.10+
-- **Formatting**: Black (88 char line length), isort
-- **Linting**: flake8
 - **Type hints**: mypy enforced (`disallow_untyped_defs=true`)
 - **Testing**: pytest with asyncio support
-- **Naming**: snake_case for functions/vars, CamelCase for classes
-- **Imports**: Group stdlib → third-party → local (isort + Black)
 - **Error handling**: Custom OpenAI-compatible error responses in `api/exceptions.py`
 - **Logging**: JSON structured logging via `core/logging.py`
-- **Config**: All user config via env vars with EMB_PROVIDER_ prefix
+- **Config**: All user config via env vars. Check `.env` file for all available variables.
