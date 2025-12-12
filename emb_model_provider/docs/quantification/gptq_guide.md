@@ -76,6 +76,92 @@ model.quantize(calibration_dataset, batch_size=1)
 model.save(quant_path)
 ```
 
+### 针对嵌入模型的校准数据集
+
+对于嵌入模型，使用与目标任务相关的校准数据集非常重要：
+
+```python
+from datasets import load_dataset
+from gptqmodel import GPTQModel, QuantizeConfig
+
+# 嵌入模型路径
+model_id = "sentence-transformers/all-MiniLM-L6-v2"
+quant_path = "all-MiniLM-L6-v2-gptq-4bit"
+
+# 准备嵌入任务相关的校准数据集
+def prepare_embedding_calibration_data():
+    """准备适合嵌入模型的校准数据"""
+    
+    # 选项1: 使用文本相似度数据集
+    dataset = load_dataset("sentence-transformers/stsb", split="train")
+    calibration_texts = []
+    
+    for item in dataset.select(range(512)):  # 使用512个样本
+        calibration_texts.append(item["sentence1"])
+        calibration_texts.append(item["sentence2"])
+    
+    return calibration_texts
+
+# 选项2: 使用领域特定文本
+def prepare_domain_calibration_data():
+    """准备领域特定的校准数据"""
+    
+    # 示例：使用学术论文摘要
+    dataset = load_dataset("scientific_papers", "arxiv", split="train")
+    calibration_texts = dataset.select(range(1024))["abstract"]
+    
+    return calibration_texts
+
+# 选项3: 使用自定义文本数据
+def prepare_custom_calibration_data(texts):
+    """使用自定义文本数据作为校准数据"""
+    
+    # 确保文本长度适中
+    processed_texts = []
+    for text in texts:
+        if len(text.split()) > 10:  # 过滤太短的文本
+            processed_texts.append(text[:512])  # 截断到512字符
+    
+    return processed_texts[:1024]  # 限制到1024个样本
+
+# 准备校准数据
+calibration_dataset = prepare_embedding_calibration_data()
+
+# 配置量化参数
+quant_config = QuantizeConfig(
+    bits=4,
+    group_size=128,
+    desc_act=False,  # 对于嵌入模型通常设为False
+    sym=True,       # 对称量化
+)
+
+# 加载模型
+model = GPTQModel.load(model_id, quant_config)
+
+# 执行量化
+model.quantize(calibration_dataset, batch_size=1)
+
+# 保存量化模型
+model.save(quant_path)
+```
+
+### 校准数据集最佳实践
+
+1. **数据选择原则**：
+   - 选择与目标任务相似的文本
+   - 确保文本多样性
+   - 避免包含过多特殊字符或格式
+
+2. **数据量建议**：
+   - 小模型（<1B参数）：128-256个样本
+   - 中等模型（1B-7B参数）：512-1024个样本
+   - 大模型（>7B参数）：1024-2048个样本
+
+3. **文本长度**：
+   - 保持与实际使用场景相似的文本长度
+   - 避免过短（<10词）或过长（>512词）的文本
+   - 考虑模型的输入限制
+
 ### 模型推理
 
 ```python

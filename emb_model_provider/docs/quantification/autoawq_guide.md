@@ -76,6 +76,149 @@ model.save_quantized(quant_path)
 tokenizer.save_pretrained(quant_path)
 ```
 
+### 针对嵌入模型的校准数据集
+
+对于嵌入模型，AWQ需要使用与目标任务相关的校准数据集：
+
+```python
+from awq import AutoAWQForCausalLM
+from transformers import AutoTokenizer
+from datasets import load_dataset
+import torch
+
+# 嵌入模型路径
+model_path = 'sentence-transformers/all-MiniLM-L6-v2'
+quant_path = 'all-MiniLM-L6-v2-awq-4bit'
+
+# 准备校准数据集
+def prepare_embedding_calibration_data():
+    """准备适合嵌入模型的校准数据"""
+    
+    # 选项1: 使用文本相似度数据集
+    dataset = load_dataset("sentence-transformers/stsb", split="train")
+    calibration_texts = []
+    
+    for item in dataset.select(range(512)):  # 使用512个样本
+        calibration_texts.append(item["sentence1"])
+        calibration_texts.append(item["sentence2"])
+    
+    return calibration_texts
+
+# 选项2: 使用领域特定文本
+def prepare_domain_calibration_data():
+    """准备领域特定的校准数据"""
+    
+    # 示例：使用学术论文摘要
+    dataset = load_dataset("scientific_papers", "arxiv", split="train")
+    calibration_texts = dataset.select(range(1024))["abstract"]
+    
+    return calibration_texts
+
+# 准备校准数据
+calibration_texts = prepare_embedding_calibration_data()
+
+# 将文本转换为token
+def prepare_calibration_tokens(tokenizer, texts, max_length=512):
+    """准备校准token数据"""
+    calibration_data = []
+    
+    for text in texts:
+        # 分词并截断
+        tokens = tokenizer(
+            text,
+            max_length=max_length,
+            truncation=True,
+            padding=False,
+            return_tensors="pt"
+        )
+        calibration_data.append(tokens["input_ids"])
+    
+    # 合并为批次
+    calibration_data = torch.cat(calibration_data, dim=0)
+    return calibration_data
+
+# 加载模型和分词器
+model = AutoAWQForCausalLM.from_pretrained(model_path)
+tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+# 准备校准数据
+calibration_tokens = prepare_calibration_tokens(tokenizer, calibration_texts)
+
+# 量化配置
+quant_config = {
+    "zero_point": True,
+    "q_group_size": 128,
+    "w_bit": 4,
+    "version": "GEMM"
+}
+
+# 使用校准数据量化模型
+model.quantize(calibration_tokens, quant_config=quant_config)
+
+# 保存量化模型
+model.save_quantized(quant_path)
+tokenizer.save_pretrained(quant_path)
+```
+
+### 使用自定义校准数据
+
+```python
+from awq import AutoAWQForCausalLM
+from transformers import AutoTokenizer
+import torch
+
+# 自定义校准文本
+custom_texts = [
+    "This is an example sentence for embedding model quantization.",
+    "Embedding models convert text into numerical representations.",
+    "Quantization reduces model size while preserving performance.",
+    # 添加更多与你的应用相关的文本...
+]
+
+# 模型路径
+model_path = 'your-embedding-model'
+quant_path = 'your-embedding-model-awq-4bit'
+
+# 加载模型
+model = AutoAWQForCausalLM.from_pretrained(model_path)
+tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+# 准备校准数据
+calibration_tokens = prepare_calibration_tokens(tokenizer, custom_texts)
+
+# 量化配置
+quant_config = {
+    "zero_point": True,
+    "q_group_size": 128,
+    "w_bit": 4,
+    "version": "GEMM"
+}
+
+# 量化模型
+model.quantize(calibration_tokens, quant_config=quant_config)
+
+# 保存模型
+model.save_quantized(quant_path)
+tokenizer.save_pretrained(quant_path)
+```
+
+### 校准数据集最佳实践
+
+1. **数据选择原则**：
+   - 选择与实际应用场景相似的文本
+   - 确保文本覆盖模型将遇到的各种情况
+   - 避免使用与目标任务无关的通用文本
+
+2. **数据量建议**：
+   - 小模型：128-256个样本
+   - 中等模型：512-1024个样本
+   - 大模型：1024-2048个样本
+
+3. **文本预处理**：
+   - 清理特殊字符和格式
+   - 保持一致的文本长度
+   - 考虑模型的输入限制
+
 ### 模型推理
 
 ```python
