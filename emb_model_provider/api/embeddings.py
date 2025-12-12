@@ -87,7 +87,7 @@ async def create_embeddings(request: EmbeddingRequest) -> EmbeddingResponse:
         embedding_data = response.data
     
     # Calculate token usage
-    prompt_tokens = embedding_service.count_tokens(request.input)
+    prompt_tokens = embedding_service.count_tokens(request.input, request.model)
     usage = Usage(
         prompt_tokens=prompt_tokens,
         total_tokens=prompt_tokens

@@ -6,7 +6,7 @@ to load configuration from environment variables and .env files.
 """
 
 import os
-from typing import Optional, List, Dict, Union
+from typing import Any, Optional, List, Dict, Union
 from pathlib import Path
 import json
 import logging
@@ -198,31 +198,49 @@ class Config(BaseSettings):
         description="Device to run the model on (auto, cpu, cuda)"
     )
 
-    # Precision configuration
-    model_precision: str = Field(
+    # Storage precision configuration
+    model_storage_precision: str = Field(
         default="auto",
-        pattern="^(auto|fp32|fp16|bf16|int8|int4)$",
-        description="Model precision to use: auto, fp32, fp16, bf16, int8, int4"
+        pattern="^(auto|fp32|fp16|fp8|nf4|int8|int4)$",
+        description="Model storage precision: auto, fp32, fp16, fp8, nf4, int8, int4"
     )
-    
+
+    storage_config: Union[str, Dict[str, Any]] = Field(
+        default="{}",
+        description="Storage configuration JSON string or dict"
+    )
+
+    # Compute precision configuration
+    model_compute_precision: str = Field(
+        default="auto",
+        pattern="^(auto|fp32|fp16|bf16|tf32)$",
+        description="Model compute precision: auto, fp32, fp16, bf16, tf32"
+    )
+
+    compute_config: Union[str, Dict[str, Any]] = Field(
+        default="{}",
+        description="Compute configuration JSON string or dict"
+    )
+
+    # Precision validation
+    precision_validation: bool = Field(
+        default=True,
+        description="Whether to validate storage and compute precision compatibility"
+    )
+
     # Model-specific precision overrides (JSON format or dict)
     model_precision_overrides: Union[str, Dict[str, str]] = Field(
         default="{}",
-        description="JSON string or dict mapping model names to precision settings"
+        description="JSON string or dict mapping model names to precision settings (deprecated - use model_mapping instead)"
     )
-    
-    # Quantization configuration
-    enable_quantization: bool = Field(
-        default=False,
-        description="Enable quantization support (int8/int4)"
-    )
-    
+
+    # Quantization configuration (now part of storage precision)
     quantization_method: str = Field(
         default="bitsandbytes",
         pattern="^(bitsandbytes|gptq|awq)$",
         description="Quantization method to use: bitsandbytes, gptq, awq"
     )
-    
+
     # GPU memory optimization
     enable_gpu_memory_optimization: bool = Field(
         default=True,
@@ -325,29 +343,47 @@ class Config(BaseSettings):
         except (json.JSONDecodeError, AttributeError, TypeError):
             return {}
 
-    def get_precision_for_model(self, model_name: str) -> str:
+    def get_precision_for_model(self, model_name: str) -> dict:
         """
-        Get the precision setting for a specific model.
-        
+        Get the precision settings for a specific model.
+
         Args:
             model_name: The name of the model
-            
+
         Returns:
-            str: Precision setting for the model (auto, fp32, fp16, bf16, int8, int4)
+            dict: Precision settings for the model with storage and compute precision
         """
         overrides = self.get_model_precision_overrides()
-        
+
         # Check for exact model name match
         if model_name in overrides:
-            return overrides[model_name]
-        
+            # For backward compatibility, if it's a single string, return it for both
+            precision = overrides[model_name]
+            if isinstance(precision, str):
+                return {
+                    "storage_precision": precision,
+                    "compute_precision": precision
+                }
+            else:
+                # If it's already a dict with storage and compute precision
+                return precision
+
         # Check for partial matches (model name contains key)
         for override_model, precision in overrides.items():
             if override_model in model_name:
-                return precision
-        
-        # Return global precision setting
-        return self.model_precision
+                if isinstance(precision, str):
+                    return {
+                        "storage_precision": precision,
+                        "compute_precision": precision
+                    }
+                else:
+                    return precision
+
+        # Return global precision settings
+        return {
+            "storage_precision": self.model_storage_precision,
+            "compute_precision": self.model_compute_precision
+        }
 
     def get_precision_config(self) -> dict:
         """
@@ -357,9 +393,12 @@ class Config(BaseSettings):
             dict: Precision configuration parameters
         """
         return {
-            "model_precision": self.model_precision,
+            "model_storage_precision": self.model_storage_precision,
+            "model_compute_precision": self.model_compute_precision,
+            "storage_config": self.storage_config,
+            "compute_config": self.compute_config,
+            "precision_validation": self.precision_validation,
             "model_precision_overrides": self.get_model_precision_overrides(),
-            "enable_quantization": self.enable_quantization,
             "quantization_method": self.quantization_method,
             "enable_gpu_memory_optimization": self.enable_gpu_memory_optimization,
         }
@@ -593,11 +632,13 @@ class Config(BaseSettings):
                 for alias, model_config in result.items():
                     if isinstance(model_config, str):
                         # 如果是字符串格式，转换为配置字典
+                        precision_config = self.get_precision_for_model(model_config)
                         result[alias] = {
                             "name": model_config,
                             "path": "",
                             "source": self.model_source,  # 使用全局配置
-                            "precision": self.get_precision_for_model(model_config),
+                            "storage_precision": precision_config["storage_precision"],
+                            "compute_precision": precision_config["compute_precision"],
                             "trust_remote_code": False
                         }
                     elif isinstance(model_config, dict):
@@ -612,12 +653,28 @@ class Config(BaseSettings):
                             model_config["path"] = model_config["model_path"]
                         model_config.setdefault("path", "")
                         model_config.setdefault("source", self.model_source)
-                        model_config.setdefault("precision", self.get_precision_for_model(model_config["name"]))
+
+                        # Handle precision configuration - check if already has storage and compute precision
+                        if "precision" in model_config:
+                            # Old format, convert to new format
+                            old_precision = model_config["precision"]
+                            if isinstance(old_precision, str):
+                                model_config.setdefault("storage_precision", old_precision)
+                                model_config.setdefault("compute_precision", old_precision)
+                            elif isinstance(old_precision, dict):
+                                model_config.setdefault("storage_precision", old_precision.get("storage_precision", self.model_storage_precision))
+                                model_config.setdefault("compute_precision", old_precision.get("compute_precision", self.model_compute_precision))
+                        else:
+                            # Get new precision config
+                            precision_config = self.get_precision_for_model(model_config["name"])
+                            model_config.setdefault("storage_precision", precision_config["storage_precision"])
+                            model_config.setdefault("compute_precision", precision_config["compute_precision"])
+
                         model_config.setdefault("trust_remote_code", False)
                         model_config.setdefault("revision", "main")
                         model_config.setdefault("fallback_to_huggingface", True)
                         model_config.setdefault("load_from_transformers", self.load_from_transformers)
-                        
+
                         # 如果指定了path，优先使用离线模式
                         if model_config["path"] and self.enable_path_priority:
                             model_config["source"] = "transformers"
@@ -649,20 +706,22 @@ class Config(BaseSettings):
                 "name": model_config.get("name", alias),
                 "path": model_config.get("path", self.model_path),
                 "source": model_config.get("source", self.model_source),
-                "precision": model_config.get("precision", self.get_precision_for_model(model_config.get("name", alias))),
+                "storage_precision": model_config.get("storage_precision", self.model_storage_precision),
+                "compute_precision": model_config.get("compute_precision", self.model_compute_precision),
                 "trust_remote_code": model_config.get("trust_remote_code", False),
                 "revision": model_config.get("revision", "main"),
                 "fallback_to_huggingface": model_config.get("fallback_to_huggingface", True),
                 "load_from_transformers": model_config.get("load_from_transformers", self.load_from_transformers)
             }
-        
+
         # 如果别名未找到，检查是否是默认模型
         elif alias == self.model_name:
             return {
                 "name": self.model_name,
                 "path": self.model_path,
                 "source": self.model_source,
-                "precision": self.model_precision,
+                "storage_precision": self.model_storage_precision,
+                "compute_precision": self.model_compute_precision,
                 "trust_remote_code": False,
                 "revision": "main",
                 "fallback_to_huggingface": True,

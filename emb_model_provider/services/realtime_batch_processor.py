@@ -9,7 +9,7 @@ import asyncio
 import time
 from typing import List, Optional, Any, Dict
 from dataclasses import dataclass
-from collections import deque
+from collections import defaultdict, deque
 from emb_model_provider.core.logging import get_logger
 from emb_model_provider.core.config import Config
 from emb_model_provider.api.embeddings import EmbeddingRequest, EmbeddingData
@@ -156,45 +156,56 @@ class RealtimeBatchProcessor:
         
         logger.info(f"Processing batch of {len(requests_to_process)} requests")
         
-        # Extract inputs from all requests
-        # Note: This implementation assumes all requests use the same model
-        all_inputs = []
+        # Group requests by model to avoid model mixing
+        requests_by_model = defaultdict(list)
         for batch_req in requests_to_process:
-            inputs = batch_req.request.input if isinstance(batch_req.request.input, list) else [batch_req.request.input]
-            all_inputs.extend(inputs)
+            requests_by_model[batch_req.request.model].append(batch_req)
         
-        try:
-            # Process all inputs together using the embedding service
-            result = self.embedding_service.generate_embeddings(all_inputs)
-            if asyncio.iscoroutine(result):
-                embedding_data_list: List[EmbeddingData] = await result
-            else:
-                embedding_data_list: List[EmbeddingData] = result
-            
-            # Distribute results back to individual requests
-            idx = 0
-            for batch_req in requests_to_process:
-                if batch_req.future.done():
-                    # Skip if future is already cancelled or done
-                    idx += 1 if not isinstance(batch_req.request.input, list) else len(batch_req.request.input)
-                    continue
+        # Process each model group separately
+        global_idx = 0  # Global index for the entire batch
+        for model_alias, model_requests in requests_by_model.items():
+            try:
+                # Extract inputs from all requests for this model
+                all_inputs = []
+                request_input_ranges = []  # Track which inputs belong to which request
+                
+                for batch_req in model_requests:
+                    inputs = batch_req.request.input if isinstance(batch_req.request.input, list) else [batch_req.request.input]
+                    start_idx = len(all_inputs)
+                    all_inputs.extend(inputs)
+                    end_idx = len(all_inputs)
+                    request_input_ranges.append((batch_req, start_idx, end_idx))
+                
+                # Process all inputs together using the embedding service
+                result = self.embedding_service.generate_embeddings(all_inputs, model_alias)
+                if asyncio.iscoroutine(result):
+                    embedding_data_list: List[EmbeddingData] = await result
+                else:
+                    embedding_data_list: List[EmbeddingData] = result
+                
+                # Distribute results back to individual requests
+                for batch_req, start_idx, end_idx in request_input_ranges:
+                    if batch_req.future.done():
+                        # Skip if future is already cancelled or done
+                        global_idx += (end_idx - start_idx)
+                        continue
                     
-                inputs_count = 1 if not isinstance(batch_req.request.input, list) else len(batch_req.request.input)
-                request_results = embedding_data_list[idx:idx + inputs_count]
-                
-                # Update result indices to match this specific request
-                for i, data in enumerate(request_results):
-                    data.index = i
-                
-                batch_req.future.set_result(request_results)
-                idx += inputs_count
-                
-        except Exception as e:
-            logger.error(f"Batch processing failed: {e}")
-            # Set exception for all requests in the batch that aren't already done
-            for batch_req in requests_to_process:
-                if not batch_req.future.done():
-                    batch_req.future.set_exception(e)
+                    # Get the results for this specific request
+                    request_results = embedding_data_list[start_idx:end_idx]
+                    
+                    # Update result indices to match the global batch index
+                    for i, data in enumerate(request_results):
+                        data.index = global_idx + i
+                    
+                    batch_req.future.set_result(request_results)
+                    global_idx += (end_idx - start_idx)
+                    
+            except Exception as e:
+                logger.error(f"Batch processing failed for model {model_alias}: {e}")
+                # Set exception for all requests in this model group that aren't already done
+                for batch_req in model_requests:
+                    if not batch_req.future.done():
+                        batch_req.future.set_exception(e)
     
     async def _process_loop(self) -> None:
         """

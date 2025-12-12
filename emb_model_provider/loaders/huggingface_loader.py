@@ -53,8 +53,11 @@ class HuggingFaceModelLoader(BaseModelLoader):
         self.load_from_transformers = kwargs.get('load_from_transformers', False)
         
         # Precision configuration
-        self.model_precision = kwargs.get('model_precision', config.get_precision_for_model(model_name))
-        self.enable_quantization = kwargs.get('enable_quantization', config.enable_quantization)
+        precision_config = config.get_precision_for_model(model_name)
+        self.model_storage_precision = kwargs.get('model_storage_precision', precision_config['storage_precision'])
+        self.model_compute_precision = kwargs.get('model_compute_precision', precision_config['compute_precision'])
+        self.storage_config = kwargs.get('storage_config', config.storage_config if hasattr(config, 'storage_config') else {})
+        self.compute_config = kwargs.get('compute_config', config.compute_config if hasattr(config, 'compute_config') else {})
         self.quantization_method = kwargs.get('quantization_method', config.quantization_method)
         self.enable_gpu_memory_optimization = kwargs.get('enable_gpu_memory_optimization', config.enable_gpu_memory_optimization)
         
@@ -125,31 +128,41 @@ class HuggingFaceModelLoader(BaseModelLoader):
                 "trust_remote_code": self.transformers_trust_remote_code
             }
             
-            # Add quantization support if enabled
-            if self.enable_quantization:
-                if self.quantization_method == "int8":
-                    model_kwargs["load_in_8bit"] = True
-                    model_kwargs["torch_dtype"] = torch.float16  # Use fp16 for compute with int8 weights
-                elif self.quantization_method == "int4":
-                    model_kwargs["load_in_4bit"] = True
-                    model_kwargs["torch_dtype"] = torch.float16  # Use fp16 for compute with int4 weights
-                    
-                # Add GPU memory optimization if enabled
-                if self.enable_gpu_memory_optimization:
-                    model_kwargs["device_map"] = "auto"
-            
-            # Add quantization support if enabled
-            if self.enable_quantization:
-                if self.quantization_method == "int8":
-                    model_kwargs["load_in_8bit"] = True
-                    model_kwargs["torch_dtype"] = torch.float16  # Use fp16 for compute with int8 weights
-                elif self.quantization_method == "int4":
-                    model_kwargs["load_in_4bit"] = True
-                    model_kwargs["torch_dtype"] = torch.float16  # Use fp16 for compute with int4 weights
-                    
-                # Add GPU memory optimization if enabled
-                if self.enable_gpu_memory_optimization:
-                    model_kwargs["device_map"] = "auto"
+            # Handle storage precision (quantization)
+            if self.model_storage_precision in ["int4", "int8", "fp4", "nf4"]:
+                if self.model_storage_precision in ["int8", "int4"]:
+                    if self.model_storage_precision == "int8":
+                        model_kwargs["load_in_8bit"] = True
+                    elif self.model_storage_precision == "int4":
+                        model_kwargs["load_in_4bit"] = True
+
+                    # Set the compute precision based on our compute precision config
+                    compute_dtype = self._get_optimal_precision()
+                    model_kwargs["torch_dtype"] = compute_dtype
+
+                    # Add GPU memory optimization if enabled
+                    if self.enable_gpu_memory_optimization:
+                        model_kwargs["device_map"] = "auto"
+                elif self.model_storage_precision in ["fp4", "nf4"]:
+                    # Handle 4-bit float quantization with bitsandbytes
+                    from transformers import BitsAndBytesConfig
+                    bnb_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type=self.model_storage_precision,
+                        bnb_4bit_compute_dtype=self._get_optimal_precision()
+                    )
+                    model_kwargs["quantization_config"] = bnb_config
+            elif self.model_storage_precision != "auto":
+                # If storage precision is explicitly set to a floating point type
+                if self.model_storage_precision == "fp16":
+                    model_kwargs["torch_dtype"] = torch.float16
+                elif self.model_storage_precision == "fp32":
+                    model_kwargs["torch_dtype"] = torch.float32
+                elif self.model_storage_precision == "bf16":
+                    model_kwargs["torch_dtype"] = torch.bfloat16
+                elif self.model_storage_precision == "fp8":
+                    model_kwargs["torch_dtype"] = torch.float8_e4m3fn  # or torch.float8_e5m2
             
             # Note: transformers_cache_dir is no longer used as HuggingFace manages its own cache
             
@@ -200,7 +213,7 @@ class HuggingFaceModelLoader(BaseModelLoader):
                 model_path = os.path.join("models", self.model_name)
             self.logger.info(f"Loading model from local path: {model_path}")
             log_model_event("load_start", self.model_name, {"source": "local", "path": model_path})
-            
+
             # Prepare kwargs for model loading
             # Smart precision selection based on model requirements and device capabilities
             model_kwargs = {
@@ -208,7 +221,43 @@ class HuggingFaceModelLoader(BaseModelLoader):
                 "low_cpu_mem_usage": False,
                 "trust_remote_code": self.transformers_trust_remote_code
             }
-            
+
+            # Handle storage precision (quantization)
+            if self.model_storage_precision in ["int4", "int8", "fp4", "nf4"]:
+                if self.model_storage_precision in ["int8", "int4"]:
+                    if self.model_storage_precision == "int8":
+                        model_kwargs["load_in_8bit"] = True
+                    elif self.model_storage_precision == "int4":
+                        model_kwargs["load_in_4bit"] = True
+
+                    # Set the compute precision based on our compute precision config
+                    compute_dtype = self._get_optimal_precision()
+                    model_kwargs["torch_dtype"] = compute_dtype
+
+                    # Add GPU memory optimization if enabled
+                    if self.enable_gpu_memory_optimization:
+                        model_kwargs["device_map"] = "auto"
+                elif self.model_storage_precision in ["fp4", "nf4"]:
+                    # Handle 4-bit float quantization with bitsandbytes
+                    from transformers import BitsAndBytesConfig
+                    bnb_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type=self.model_storage_precision,
+                        bnb_4bit_compute_dtype=self._get_optimal_precision()
+                    )
+                    model_kwargs["quantization_config"] = bnb_config
+            elif self.model_storage_precision != "auto":
+                # If storage precision is explicitly set to a floating point type
+                if self.model_storage_precision == "fp16":
+                    model_kwargs["torch_dtype"] = torch.float16
+                elif self.model_storage_precision == "fp32":
+                    model_kwargs["torch_dtype"] = torch.float32
+                elif self.model_storage_precision == "bf16":
+                    model_kwargs["torch_dtype"] = torch.bfloat16
+                elif self.model_storage_precision == "fp8":
+                    model_kwargs["torch_dtype"] = torch.float8_e4m3fn  # or torch.float8_e5m2
+
             # Load tokenizer
             tokenizer_kwargs = {"trust_remote_code": self.transformers_trust_remote_code}
                 
@@ -241,40 +290,50 @@ class HuggingFaceModelLoader(BaseModelLoader):
     def _get_optimal_precision(self) -> torch.dtype:
         """
         Determine the optimal precision for model loading based on actual model requirements.
-        
+
         This method considers in order of priority:
         1. User configuration preferences (including model-specific overrides)
         2. Model's native precision requirements from config
         3. Device capabilities and performance characteristics
         4. Memory efficiency vs precision trade-offs
-        5. Quantization support if enabled
-        
+
         Returns:
-            torch.dtype: Optimal precision dtype
+            torch.dtype: Optimal compute precision dtype
         """
-        # 1. Check user configuration first (highest priority)
-        if self.model_precision != "auto":
-            if self.model_precision == "fp16":
+        # 1. Check user compute configuration first (highest priority)
+        if self.model_compute_precision != "auto":
+            if self.model_compute_precision == "fp16":
                 return torch.float16
-            elif self.model_precision == "fp32":
+            elif self.model_compute_precision == "fp32":
                 return torch.float32
-            elif self.model_precision == "bf16":
+            elif self.model_compute_precision == "bf16":
                 if self.device and self.device.startswith("cuda") and torch.cuda.is_bf16_supported():
                     return torch.bfloat16
                 else:
                     self.logger.warning("bfloat16 not supported on this device, falling back to fp16")
                     return torch.float16
-            elif self.model_precision in ["int8", "int4"]:
-                # Quantization is handled separately in model loading kwargs
-                # For compute dtype, use fp16 for better performance
+            elif self.model_compute_precision == "tf32":
+                # TF32 is only available on Ampere and later GPUs
+                if self.device and self.device.startswith("cuda"):
+                    major, _ = torch.cuda.get_device_capability()
+                    if major >= 8:
+                        return torch.float32  # TF32 is used by enabling it globally, not as a dtype
+                    else:
+                        self.logger.warning("TF32 is not available on this GPU, falling back to fp16")
+                        return torch.float16
+                else:
+                    self.logger.warning("TF32 is only available on CUDA, falling back to fp16")
+                    return torch.float16
+            else:
+                # For other compute precisions, default to fp16
                 return torch.float16
-        
+
         # 2. Try to detect model's native precision from config
         try:
             # Attempt to load model config to check native precision
             from transformers import AutoConfig
             model_config = AutoConfig.from_pretrained(self.model_name)
-            
+
             # Check if model has specific dtype requirements
             if hasattr(model_config, 'torch_dtype'):
                 native_dtype = model_config.torch_dtype
@@ -284,7 +343,7 @@ class HuggingFaceModelLoader(BaseModelLoader):
                     if isinstance(native_dtype, torch.dtype):
                         return native_dtype
                     # Fallback to default if native dtype is not a torch dtype
-            
+
             # Check for quantization config that might indicate precision preferences
             if hasattr(model_config, 'quantization_config'):
                 quant_config = model_config.quantization_config
@@ -294,27 +353,27 @@ class HuggingFaceModelLoader(BaseModelLoader):
                         return compute_dtype
                     # Fallback to fp16 for quantization
                     return torch.float16
-        
+
         except Exception as e:
             # If config loading fails, fall back to heuristic approach
             self.logger.debug(f"Could not load model config for precision detection: {e}")
-        
+
         # 3. Device-based heuristics (fallback strategy)
         # For CPU devices, always use fp32 for better compatibility
         if self.device == "cpu":
             return torch.float32
-        
+
         # 4. Model-specific heuristics for GPU devices
         # Check model name for known fp16-compatible models
         fp16_compatible_models = [
             "all-MiniLM", "paraphrase", "distilbert", "mpnet", "roberta", "sentence-transformers"
         ]
-        
+
         model_lower = self.model_name.lower()
         if any(compatible in model_lower for compatible in fp16_compatible_models):
             # These embedding models are known to work well with fp16
             return torch.float16
-        
+
         # 5. Default to fp32 for unknown models to ensure precision
         # Most embedding models benefit from higher precision
         return torch.float32

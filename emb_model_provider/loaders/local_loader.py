@@ -42,8 +42,11 @@ class LocalModelLoader(BaseModelLoader):
         self.logger = get_logger("emb_model_provider.loaders.local")
         
         # Local-specific configuration
-        self.model_precision = kwargs.get('model_precision', config.get_precision_for_model(model_name))
-        self.enable_quantization = kwargs.get('enable_quantization', config.enable_quantization)
+        precision_config = config.get_precision_for_model(model_name)
+        self.model_storage_precision = kwargs.get('model_storage_precision', precision_config['storage_precision'])
+        self.model_compute_precision = kwargs.get('model_compute_precision', precision_config['compute_precision'])
+        self.storage_config = kwargs.get('storage_config', getattr(config, 'storage_config', {}))
+        self.compute_config = kwargs.get('compute_config', getattr(config, 'compute_config', {}))
         self.quantization_method = kwargs.get('quantization_method', config.quantization_method)
         self.enable_gpu_memory_optimization = kwargs.get('enable_gpu_memory_optimization', config.enable_gpu_memory_optimization)
         
@@ -68,6 +71,9 @@ class LocalModelLoader(BaseModelLoader):
             self.logger.debug("Model already loaded")
             return self._model, self._tokenizer
         
+        if self.model_path is None:
+            raise ModelLoadError("model_path cannot be None for LocalModelLoader", self.model_name)
+        
         try:
             self.logger.info(f"Loading model from local path: {self.model_path}")
             log_model_event("load_start", self.model_name, {"source": "local", "path": self.model_path})
@@ -83,18 +89,41 @@ class LocalModelLoader(BaseModelLoader):
                 "trust_remote_code": self.trust_remote_code
             }
             
-            # Add quantization support if enabled
-            if self.enable_quantization:
-                if self.quantization_method == "int8":
-                    model_kwargs["load_in_8bit"] = True
-                    model_kwargs["torch_dtype"] = torch.float16  # Use fp16 for compute with int8 weights
-                elif self.quantization_method == "int4":
-                    model_kwargs["load_in_4bit"] = True
-                    model_kwargs["torch_dtype"] = torch.float16  # Use fp16 for compute with int4 weights
-                    
-                # Add GPU memory optimization if enabled
-                if self.enable_gpu_memory_optimization:
-                    model_kwargs["device_map"] = "auto"
+            # Handle storage precision (quantization)
+            if self.model_storage_precision in ["int4", "int8", "fp4", "nf4"]:
+                if self.model_storage_precision in ["int8", "int4"]:
+                    if self.model_storage_precision == "int8":
+                        model_kwargs["load_in_8bit"] = True
+                    elif self.model_storage_precision == "int4":
+                        model_kwargs["load_in_4bit"] = True
+
+                    # Set the compute precision based on our compute precision config
+                    compute_dtype = self._get_optimal_precision()
+                    model_kwargs["torch_dtype"] = compute_dtype
+
+                    # Add GPU memory optimization if enabled
+                    if self.enable_gpu_memory_optimization:
+                        model_kwargs["device_map"] = "auto"
+                elif self.model_storage_precision in ["fp4", "nf4"]:
+                    # Handle 4-bit float quantization with bitsandbytes
+                    from transformers import BitsAndBytesConfig
+                    bnb_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type=self.model_storage_precision,
+                        bnb_4bit_compute_dtype=self._get_optimal_precision()
+                    )
+                    model_kwargs["quantization_config"] = bnb_config
+            elif self.model_storage_precision != "auto":
+                # If storage precision is explicitly set to a floating point type
+                if self.model_storage_precision == "fp16":
+                    model_kwargs["torch_dtype"] = torch.float16
+                elif self.model_storage_precision == "fp32":
+                    model_kwargs["torch_dtype"] = torch.float32
+                elif self.model_storage_precision == "bf16":
+                    model_kwargs["torch_dtype"] = torch.bfloat16
+                elif self.model_storage_precision == "fp8":
+                    model_kwargs["torch_dtype"] = torch.float8_e4m3fn  # or torch.float8_e5m2
             
             # Load tokenizer
             tokenizer_kwargs = {"trust_remote_code": self.trust_remote_code}
@@ -129,38 +158,50 @@ class LocalModelLoader(BaseModelLoader):
     def _get_optimal_precision(self) -> torch.dtype:
         """
         Determine the optimal precision for model loading based on actual model requirements.
-        
+
         This method considers in order of priority:
         1. User configuration preferences (including model-specific overrides)
         2. Model's native precision requirements from config
         3. Device capabilities and performance characteristics
         4. Memory efficiency vs precision trade-offs
-        5. Quantization support if enabled
-        
+
         Returns:
-            torch.dtype: Optimal precision dtype
+            torch.dtype: Optimal compute precision dtype
         """
-        # 1. Check user configuration first (highest priority)
-        if self.model_precision != "auto":
-            if self.model_precision == "fp16":
+        # 1. Check user compute configuration first (highest priority)
+        if self.model_compute_precision != "auto":
+            if self.model_compute_precision == "fp16":
                 return torch.float16
-            elif self.model_precision == "fp32":
+            elif self.model_compute_precision == "fp32":
                 return torch.float32
-            elif self.model_precision == "bf16":
+            elif self.model_compute_precision == "bf16":
                 if self.device and self.device.startswith("cuda") and torch.cuda.is_bf16_supported():
                     return torch.bfloat16
                 else:
                     self.logger.warning("bfloat16 not supported on this device, falling back to fp16")
                     return torch.float16
-            elif self.model_precision in ["int8", "int4"]:
-                # Quantization is handled separately in model loading kwargs
-                # For compute dtype, use fp16 for better performance
+            elif self.model_compute_precision == "tf32":
+                # TF32 is only available on Ampere and later GPUs
+                if self.device and self.device.startswith("cuda"):
+                    major, _ = torch.cuda.get_device_capability()
+                    if major >= 8:
+                        return torch.float32  # TF32 is used by enabling it globally, not as a dtype
+                    else:
+                        self.logger.warning("TF32 is not available on this GPU, falling back to fp16")
+                        return torch.float16
+                else:
+                    self.logger.warning("TF32 is only available on CUDA, falling back to fp16")
+                    return torch.float16
+            else:
+                # For other compute precisions, default to fp16
                 return torch.float16
         
         # 2. Try to detect model's native precision from config
         try:
             # Attempt to load model config to check native precision
             from transformers import AutoConfig
+            if self.model_path is None:
+                raise ValueError("model_path cannot be None")
             model_config = AutoConfig.from_pretrained(self.model_path)
             
             # Check if model has specific dtype requirements

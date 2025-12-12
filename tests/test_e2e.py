@@ -15,7 +15,16 @@ from emb_model_provider.core.config import config
 @pytest.fixture
 def client():
     """创建测试客户端"""
-    return TestClient(app)
+    # 在e2e测试中直接禁用动态批处理
+    from emb_model_provider.core.config import config
+    original_value = config.enable_dynamic_batching
+    config.enable_dynamic_batching = False
+    
+    client = TestClient(app)
+    yield client
+    
+    # 恢复原始配置
+    config.enable_dynamic_batching = original_value
 
 
 class TestE2EAPIFlow:
@@ -23,22 +32,30 @@ class TestE2EAPIFlow:
     
     def test_complete_embedding_flow(self, client):
         """测试完整的嵌入流程 - 从请求到响应"""
+        print("=== 开始测试 ===")
+        
         # 1. 检查服务健康状态
+        print("1. 检查健康状态...")
         health_response = client.get("/health")
         assert health_response.status_code == 200
         assert health_response.json()["status"] == "healthy"
+        print("✓ 健康检查通过")
         
         # 2. 获取可用模型列表
+        print("2. 获取模型列表...")
         models_response = client.get("/v1/models")
         assert models_response.status_code == 200
         models_data = models_response.json()
         assert "data" in models_data
         assert len(models_data["data"]) >= 1
+        print(f"✓ 找到 {len(models_data['data'])} 个模型")
         
         # 获取模型ID
         model_id = models_data["data"][0]["id"]
+        print(f"3. 使用模型: {model_id}")
         
         # 3. 发送单个文本嵌入请求
+        print("4. 发送单个嵌入请求...")
         single_request = {
             "input": "This is a test sentence for embedding.",
             "model": model_id
@@ -46,6 +63,7 @@ class TestE2EAPIFlow:
         
         embed_response = client.post("/v1/embeddings", json=single_request)
         assert embed_response.status_code == 200
+        print("✓ 单个嵌入请求完成")
         
         embed_data = embed_response.json()
         assert "data" in embed_data

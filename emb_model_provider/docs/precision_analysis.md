@@ -104,13 +104,52 @@ The current implementation correctly:
 4. ✅ **Model-Specific Overrides**: Allows different precision settings for different models
 5. ✅ **Validation**: Validates precision settings against hardware capabilities
 
+## Analysis: Quantized Models Implementation
+
+The project correctly handles quantized models by separating parameter storage precision from computational precision:
+
+1. **INT4/INT8 Storage**: When quantization is enabled, model weights are stored in INT4 or INT8 format, significantly reducing memory requirements
+2. **FP16 Computation**: During inference operations, the model uses FP16 precision for computations, maintaining numerical stability while benefiting from the reduced memory footprint
+3. **Proper Configuration**: The code explicitly sets `torch_dtype=torch.float16` while also enabling quantization flags (`load_in_4bit=True` or `load_in_8bit=True`)
+
+This separation is implemented correctly in the loaders:
+- In `huggingface_loader.py`, `model_kwargs["torch_dtype"] = torch.float16` is set when `load_in_4bit=True` or `load_in_8bit=True`
+- In `modelscope_loader.py`, the same approach is used for quantized models
+- In `local_loader.py`, the implementation follows the same pattern
+
+## Environment Configuration Analysis
+
+To answer the specific question about `.env` precision settings:
+
+1. **Global Precision Setting**: The `.env.example` file contains `EMB_PROVIDER_MODEL_PRECISION=auto` which is used as a default global setting, but the actual `.env` file does not have this setting defined.
+
+2. **Model-Specific Settings**: In the actual `.env` file, precision settings are defined in the `EMB_PROVIDER_MODEL_MAPPING` section where each model has its own precision specified as `"precision": "fp16"` for all models.
+
+3. **Runtime vs Storage Precision**:
+   - The precision setting in configuration refers to the **computational precision** during runtime
+   - For quantized models, storage precision (INT4/INT8) and computational precision (FP16) are handled separately in the implementation
+   - The configuration does not directly control storage precision but rather computational precision
+
+4. **Runtime Precision**: The runtime precision is not hard-coded as fp16/32. Instead, it's determined by:
+   - The configuration setting (`EMB_PROVIDER_MODEL_PRECISION` or model-specific overrides)
+   - Model's native precision requirements (detected from config)
+   - Device capabilities (e.g., bfloat16 support)
+   - Quantization settings (for INT4/INT8 models, computations happen in FP16)
+
 ## Conclusion
 
-The Embedding Model Provider project correctly implements precision handling with minimal confusion between runtime and computational precision. The implementation follows best practices from PyTorch and Transformers libraries:
+The Embedding Model Provider project correctly implements precision handling with proper separation between runtime and computational precision. The implementation follows best practices from PyTorch and Transformers libraries:
 
-- Quantization is properly handled with separate storage and computation precision
-- Device compatibility is respected
+- Quantization is properly handled with separate storage and computation precision: parameters are stored in INT4/INT8 format while computations are performed in FP16
+- Device compatibility is respected (e.g., bfloat16 support detection)
 - Model-specific overrides are supported
-- The architecture maintains the distinction between precision types
+- No duplication of quantization considerations: the implementation correctly distinguishes between parameter storage and computation precision
 
-The main area for improvement is in documentation clarity to better explain the difference between storage and computational precision to users. The implementation itself is solid and follows recommended practices for precision handling in modern deep learning systems.
+The architecture maintains the distinction between:
+- **Storage Precision**: INT4/INT8 for parameter storage (memory efficiency)
+- **Computational Precision**: FP16 for actual operations (numerical stability)
+- **Runtime Precision**: The precision used during inference operations
+
+The implementation does not have redundant quantization considerations - it properly handles the parameter quantization (INT4/INT8) and temporarily converts to FP16 during computation, which is the standard approach in quantized model inference. This avoids the issue of double-quantization or confusion between storage and computation precision that could occur in less carefully designed systems.
+
+Additionally, the precision settings in the environment files are not hard-coded runtime precision values but rather configurable parameters that determine both storage (for quantized models) and computational precision based on the configuration hierarchy.
