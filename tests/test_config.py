@@ -204,18 +204,18 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         """Test precision configuration options."""
         # Test default precision values
         config = Config()
-        assert config.model_precision == "auto"
+        assert config.model_storage_precision == "auto"
+        assert config.model_compute_precision == "auto"
         assert config.model_precision_overrides == {}
-        assert config.enable_quantization is False
         assert config.quantization_method == "bitsandbytes"
         assert config.enable_gpu_memory_optimization is True
 
     def test_precision_from_env(self):
         """Test loading precision configuration from environment."""
         env_vars = {
-            "EMB_PROVIDER_MODEL_PRECISION": "fp16",
+            "EMB_PROVIDER_MODEL_STORAGE_PRECISION": "fp16",
+            "EMB_PROVIDER_MODEL_COMPUTE_PRECISION": "fp16",
             "EMB_PROVIDER_MODEL_PRECISION_OVERRIDES": '{"model1": "fp16", "model2": "int8"}',
-            "EMB_PROVIDER_ENABLE_QUANTIZATION": "true",
             "EMB_PROVIDER_QUANTIZATION_METHOD": "gptq",
             "EMB_PROVIDER_ENABLE_GPU_MEMORY_OPTIMIZATION": "true",
         }
@@ -223,25 +223,34 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         with patch.dict(os.environ, env_vars, clear=True):
             config = Config.from_env()
             
-            assert config.model_precision == "fp16"
+            assert config.model_storage_precision == "fp16"
+            assert config.model_compute_precision == "fp16"
             assert config.model_precision_overrides == {"model1": "fp16", "model2": "int8"}
-            assert config.enable_quantization is True
             assert config.quantization_method == "gptq"
             assert config.enable_gpu_memory_optimization is True
 
     def test_precision_validation(self):
         """Test precision configuration validation."""
-        # Test valid precision values
-        Config(model_precision="auto")
-        Config(model_precision="fp32")
-        Config(model_precision="fp16")
-        Config(model_precision="bf16")
-        Config(model_precision="int8")
-        Config(model_precision="int4")
+        # Test valid storage precision values
+        Config(model_storage_precision="auto")
+        Config(model_storage_precision="fp32")
+        Config(model_storage_precision="fp16")
+        Config(model_storage_precision="int8")
+        Config(model_storage_precision="int4")
         
-        # Test invalid precision value
+        # Test invalid storage precision value
         with pytest.raises(ValueError):
-            Config(model_precision="invalid")
+            Config(model_storage_precision="invalid")
+        
+        # Test valid compute precision values
+        Config(model_compute_precision="auto")
+        Config(model_compute_precision="fp32")
+        Config(model_compute_precision="fp16")
+        Config(model_compute_precision="bf16")
+        
+        # Test invalid compute precision value
+        with pytest.raises(ValueError):
+            Config(model_compute_precision="invalid")
         
         # Test valid quantization methods
         Config(quantization_method="bitsandbytes")
@@ -257,14 +266,14 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         config = Config()
         precision_config = config.get_precision_config()
         
-        expected_keys = ["model_precision", "model_precision_overrides", 
-                        "enable_quantization", "quantization_method", 
+        expected_keys = ["model_storage_precision", "model_compute_precision",
+                        "model_precision_overrides", "quantization_method", 
                         "enable_gpu_memory_optimization"]
         
         assert all(key in precision_config for key in expected_keys)
-        assert precision_config["model_precision"] == "auto"
+        assert precision_config["model_storage_precision"] == "auto"
+        assert precision_config["model_compute_precision"] == "auto"
         assert precision_config["model_precision_overrides"] == {}
-        assert precision_config["enable_quantization"] is False
         assert precision_config["quantization_method"] == "bitsandbytes"
         assert precision_config["enable_gpu_memory_optimization"] is True
 
@@ -272,24 +281,40 @@ EMB_PROVIDER_LOG_LEVEL=WARNING
         """Test getting precision for specific models."""
         # Test with no overrides
         config = Config()
-        assert config.get_precision_for_model("model1") == "auto"
+        result = config.get_precision_for_model("model1")
+        assert result["storage_precision"] == "auto"
+        assert result["compute_precision"] == "auto"
         
         # Test with exact match override
         config = Config(model_precision_overrides={"model1": "fp16"})
-        assert config.get_precision_for_model("model1") == "fp16"
+        result = config.get_precision_for_model("model1")
+        assert result["storage_precision"] == "fp16"
+        assert result["compute_precision"] == "fp16"
         
         # Test with partial match override
         config = Config(model_precision_overrides={"sentence-transformers": "int8"})
-        assert config.get_precision_for_model("sentence-transformers/all-MiniLM-L6-v2") == "int8"
+        result = config.get_precision_for_model("sentence-transformers/all-MiniLM-L6-v2")
+        assert result["storage_precision"] == "int8"
+        assert result["compute_precision"] == "int8"
         
         # Test with global precision set
-        config = Config(model_precision="bf16")
-        assert config.get_precision_for_model("model1") == "bf16"
+        config = Config(model_storage_precision="bf16", model_compute_precision="bf16")
+        result = config.get_precision_for_model("model1")
+        assert result["storage_precision"] == "bf16"
+        assert result["compute_precision"] == "bf16"
         
         # Test override takes precedence over global
-        config = Config(model_precision="fp32", model_precision_overrides={"model1": "fp16"})
-        assert config.get_precision_for_model("model1") == "fp16"
-        assert config.get_precision_for_model("model2") == "fp32"
+        config = Config(
+            model_storage_precision="fp32",
+            model_compute_precision="fp32",
+            model_precision_overrides={"model1": "fp16"}
+        )
+        result = config.get_precision_for_model("model1")
+        assert result["storage_precision"] == "fp16"
+        assert result["compute_precision"] == "fp16"
+        result = config.get_precision_for_model("model2")
+        assert result["storage_precision"] == "fp32"
+        assert result["compute_precision"] == "fp32"
     
     def test_get_model_mapping(self):
         """测试获取模型映射"""

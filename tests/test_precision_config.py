@@ -17,16 +17,19 @@ class TestPrecisionConfiguration:
     def test_huggingface_loader_precision_config(self):
         """Test HuggingFace loader precision configuration."""
         # Test with explicit precision
-        loader = HuggingFaceModelLoader("test-model", model_precision="fp16")
-        assert loader.model_precision == "fp16"
+        loader = HuggingFaceModelLoader(
+            "test-model",
+            model_storage_precision="fp16",
+            model_compute_precision="fp16"
+        )
+        assert loader.model_storage_precision == "fp16"
+        assert loader.model_compute_precision == "fp16"
         
         # Test with quantization
         loader = HuggingFaceModelLoader(
             "test-model",
-            enable_quantization=True,
             quantization_method="bitsandbytes"
         )
-        assert loader.enable_quantization is True
         assert loader.quantization_method == "bitsandbytes"
         
         # Test with GPU memory optimization
@@ -36,16 +39,19 @@ class TestPrecisionConfiguration:
     def test_modelscope_loader_precision_config(self):
         """Test ModelScope loader precision configuration."""
         # Test with explicit precision
-        loader = ModelScopeModelLoader("test-model", model_precision="bf16")
-        assert loader.model_precision == "bf16"
+        loader = ModelScopeModelLoader(
+            "test-model",
+            model_storage_precision="bf16",
+            model_compute_precision="bf16"
+        )
+        assert loader.model_storage_precision == "bf16"
+        assert loader.model_compute_precision == "bf16"
         
         # Test with quantization
         loader = ModelScopeModelLoader(
             "test-model",
-            enable_quantization=True,
             quantization_method="bitsandbytes"
         )
-        assert loader.enable_quantization is True
         assert loader.quantization_method == "bitsandbytes"
         
         # Test with GPU memory optimization
@@ -58,7 +64,8 @@ class TestPrecisionConfiguration:
         loader = HuggingFaceModelLoader("test-model")
         
         # Test that the loader uses the default precision
-        assert loader.model_precision == "auto"
+        assert loader.model_storage_precision == "auto"
+        assert loader.model_compute_precision == "auto"
 
     def test_modelscope_get_optimal_precision(self):
         """Test ModelScope loader's precision configuration."""
@@ -66,40 +73,50 @@ class TestPrecisionConfiguration:
         loader = ModelScopeModelLoader("test-model")
         
         # Test that the loader uses the default precision
-        assert loader.model_precision == "auto"
+        assert loader.model_storage_precision == "auto"
+        assert loader.model_compute_precision == "auto"
 
     def test_precision_override_matching(self):
         """Test precision override matching logic."""
         config = Config(
-            model_precision="fp32",
+            model_storage_precision="fp32",
+            model_compute_precision="fp32",
             model_precision_overrides='{"sentence-transformers": "fp16", "damo": "bf16", "specific-model": "int8"}'
         )
         
         # Test config's get_precision_for_model method
-        assert config.get_precision_for_model("specific-model") == "int8"
+        result = config.get_precision_for_model("specific-model")
+        assert result["storage_precision"] == "int8"
+        assert result["compute_precision"] == "int8"
         
         # Test partial matches
-        assert config.get_precision_for_model("sentence-transformers/all-MiniLM-L6-v2") == "fp16"
-        assert config.get_precision_for_model("damo/nlp_corom_sentence-embedding_english-base") == "bf16"
+        result = config.get_precision_for_model("sentence-transformers/all-MiniLM-L6-v2")
+        assert result["storage_precision"] == "fp16"
+        assert result["compute_precision"] == "fp16"
+        
+        result = config.get_precision_for_model("damo/nlp_corom_sentence-embedding_english-base")
+        assert result["storage_precision"] == "bf16"
+        assert result["compute_precision"] == "bf16"
         
         # Test no match (fallback to global)
-        assert config.get_precision_for_model("other-model") == "fp32"
+        result = config.get_precision_for_model("other-model")
+        assert result["storage_precision"] == "fp32"
+        assert result["compute_precision"] == "fp32"
 
     def test_quantization_config(self):
         """Test quantization configuration."""
         # Create loader with quantization settings
         loader = HuggingFaceModelLoader(
             "test-model",
-            enable_quantization=True,
             quantization_method="bitsandbytes"
         )
         
         # Test that quantization settings are properly set in loader
-        assert loader.enable_quantization is True
         assert loader.quantization_method == "bitsandbytes"
         
         # Test that the loader uses the default precision for the model
-        assert loader.model_precision == "auto"  # Default precision for test-model
+        assert loader.model_storage_precision == "auto"  # Default precision for test-model
+        assert loader.model_compute_precision == "auto"
 
     def test_device_map_config(self):
         """Test device map configuration for GPU memory optimization."""
@@ -117,7 +134,7 @@ class TestPrecisionConfiguration:
     @patch("torch.cuda.is_available")
     def test_bf16_device_support_detection(self, mock_cuda_available):
         """Test bfloat16 support detection based on device capabilities."""
-        config = Config(model_precision="auto")
+        config = Config(model_storage_precision="auto", model_compute_precision="auto")
         
         # Test when CUDA is available and supports bfloat16
         mock_cuda_available.return_value = True
@@ -146,27 +163,36 @@ class TestPrecisionConfiguration:
         # Test with model-specific override
         loader = HuggingFaceModelLoader(
             "specific-model",
-            model_precision="fp32"
+            model_storage_precision="fp32",
+            model_compute_precision="fp32"
         )
         
         # Test that the loader uses the specified precision
-        assert loader.model_precision == "fp32"
+        assert loader.model_storage_precision == "fp32"
+        assert loader.model_compute_precision == "fp32"
         
         # Test with generic model name
         loader = HuggingFaceModelLoader(
             "generic-model",
-            model_precision="fp32"
+            model_storage_precision="fp32",
+            model_compute_precision="fp32"
         )
         
         # Test that the loader uses the specified precision for generic model
-        assert loader.model_precision == "fp32"
+        assert loader.model_storage_precision == "fp32"
+        assert loader.model_compute_precision == "fp32"
 
     def test_error_handling(self):
         """Test error handling for invalid configurations."""
-        # Test invalid precision in Config creation
+        # Test invalid storage precision in Config creation
         with pytest.raises(ValueError):
             # This should fail because "invalid" is not a valid precision
-            Config(model_precision="invalid")
+            Config(model_storage_precision="invalid")
+        
+        # Test invalid compute precision in Config creation
+        with pytest.raises(ValueError):
+            # This should fail because "invalid" is not a valid precision
+            Config(model_compute_precision="invalid")
         
         # Test invalid quantization method in Config creation
         with pytest.raises(ValueError):
@@ -182,13 +208,13 @@ class TestPrecisionIntegration:
         # Test HuggingFace loader integration
         hf_loader = HuggingFaceModelLoader(
             "test-model",
-            model_precision="fp16",
-            enable_quantization=True,
+            model_storage_precision="fp16",
+            model_compute_precision="fp16",
             quantization_method="bitsandbytes",
             enable_gpu_memory_optimization=True
         )
-        assert hf_loader.model_precision == "fp16"
-        assert hf_loader.enable_quantization is True
+        assert hf_loader.model_storage_precision == "fp16"
+        assert hf_loader.model_compute_precision == "fp16"
         assert hf_loader.quantization_method == "bitsandbytes"
         assert hf_loader.enable_gpu_memory_optimization is True
         
@@ -202,13 +228,13 @@ class TestPrecisionIntegration:
             
             ms_loader = ModelScopeModelLoader(
                 "test-model",
-                model_precision="fp16",
-                enable_quantization=True,
+                model_storage_precision="fp16",
+                model_compute_precision="fp16",
                 quantization_method="bitsandbytes",
                 enable_gpu_memory_optimization=True
             )
-            assert ms_loader.model_precision == "fp16"
-            assert ms_loader.enable_quantization is True
+            assert ms_loader.model_storage_precision == "fp16"
+            assert ms_loader.model_compute_precision == "fp16"
             assert ms_loader.quantization_method == "bitsandbytes"
             assert ms_loader.enable_gpu_memory_optimization is True
 
@@ -216,38 +242,46 @@ class TestPrecisionIntegration:
         """Test consistency between HuggingFace and ModelScope loaders."""
         hf_loader = HuggingFaceModelLoader(
             "test-model",
-            model_precision="bf16",
-            enable_quantization=True,
+            model_storage_precision="bf16",
+            model_compute_precision="bf16",
             quantization_method="bitsandbytes"
         )
         
         ms_loader = ModelScopeModelLoader(
             "test-model",
-            model_precision="bf16",
-            enable_quantization=True,
+            model_storage_precision="bf16",
+            model_compute_precision="bf16",
             quantization_method="bitsandbytes"
         )
         
         # Both loaders should have the same configuration
-        assert hf_loader.model_precision == ms_loader.model_precision
-        assert hf_loader.enable_quantization == ms_loader.enable_quantization
+        assert hf_loader.model_storage_precision == ms_loader.model_storage_precision
+        assert hf_loader.model_compute_precision == ms_loader.model_compute_precision
         assert hf_loader.quantization_method == ms_loader.quantization_method
 
     def test_precision_documentation_examples(self):
         """Test examples from the precision configuration documentation."""
         # Example 1: Basic fp16 configuration
-        loader = HuggingFaceModelLoader("test-model", model_precision="fp16")
-        assert loader.model_precision == "fp16"
+        loader = HuggingFaceModelLoader(
+            "test-model",
+            model_storage_precision="fp16",
+            model_compute_precision="fp16"
+        )
+        assert loader.model_storage_precision == "fp16"
+        assert loader.model_compute_precision == "fp16"
         
         # Example 2: Quantization with bitsandbytes
         loader = HuggingFaceModelLoader(
             "test-model",
-            enable_quantization=True,
             quantization_method="bitsandbytes"
         )
-        assert loader.enable_quantization is True
         assert loader.quantization_method == "bitsandbytes"
         
         # Example 3: Model-specific precision
-        loader = HuggingFaceModelLoader("test-model", model_precision="fp32")
-        assert loader.model_precision == "fp32"
+        loader = HuggingFaceModelLoader(
+            "test-model",
+            model_storage_precision="fp32",
+            model_compute_precision="fp32"
+        )
+        assert loader.model_storage_precision == "fp32"
+        assert loader.model_compute_precision == "fp32"

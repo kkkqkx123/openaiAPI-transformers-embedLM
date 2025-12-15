@@ -129,7 +129,7 @@ class ModelManager:
         self.model_name = model_config["name"]
         self.model_path = model_config["path"]
         self.model_source = model_config["source"]
-        self.model_precision = model_config["precision"]
+        self.model_precision = model_config["storage_precision"]
         # Note: cache_dir is no longer used as HuggingFace and ModelScope manage their own caches
         self.trust_remote_code = model_config["trust_remote_code"]
         self.revision = model_config["revision"]
